@@ -1,22 +1,20 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
-from typing import Literal
 
-QueryType = Literal["as_of", "current", "unsupported"]
-
-@dataclass(frozen=True)
+@dataclass
 class QueryPlan:
-    question_type: QueryType
-    entity: str | None
-    predicate: str | None
-    reference_date: date | None
+    question: str
+    kind: str = "search"
+    reference_date: date | None = None
 
-@dataclass(frozen=True)
+@dataclass
 class Evidence:
-    subject: str
-    predicate: str
-    object: str
-    valid_from: date
-    valid_to: date | None  # exclusive
     doc_id: str
-    quote: str
+    text: str
+    date: str = ""
+    score: float = 0.0
+
+@dataclass
+class AnswerResult:
+    answer: str
+    source_ids: list[str] = field(default_factory=list)

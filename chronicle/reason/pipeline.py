@@ -1,12 +1,13 @@
-from datetime import date
+from pathlib import Path
 from .planner import plan_query
-from .retriever import MemoryReader, MockMemoryReader, retrieve
-from .abstention import has_unambiguous_support
-from .answerer import abstain, format_answer
+from .retriever import retrieve
+from .abstention import should_abstain
+from .answerer import generate_answer
+from .models import AnswerResult
 
-def answer_question(question: str, memory: MemoryReader | None = None, *, today: date | None = None) -> dict[str, object]:
-    """Dependency-injected pipeline: easy to test and swap P2's memory."""
-    reader = memory if memory is not None else MockMemoryReader()
+def answer_question(question: str, state: str | Path) -> AnswerResult:
     plan = plan_query(question)
-    evidence = retrieve(plan, reader, today if today is not None else date.today())
-    return format_answer(evidence) if has_unambiguous_support(evidence) else abstain()
+    evidence = retrieve(plan, Path(state))
+    if should_abstain(evidence):
+        return AnswerResult("Not in the corpus", [])
+    return generate_answer(plan, evidence)

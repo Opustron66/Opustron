@@ -1,24 +1,29 @@
-from datetime import date
-from typing import Protocol
+"""Temporary SQLite document retriever. P2's temporal store will replace it."""
+import re
+import sqlite3
+from pathlib import Path
 from .models import Evidence, QueryPlan
 
-class MemoryReader(Protocol):
-    def find_facts(self, entity: str, predicate: str) -> list[Evidence]: ...
+STOPWORDS = set("a an the is are was were who what which when where why how did does do to in on at for from with of and or by it its this that currently current now".split())
 
-class MockMemoryReader:
-    """Replace with P2's memory API adapter once available."""
-    def __init__(self) -> None:
-        self.facts = [
-            Evidence("payments", "manager", "Alice", date(2026, 4, 1), date(2026, 5, 1), "email_001", "Alice manages payments."),
-            Evidence("payments", "manager", "Bob", date(2026, 5, 1), None, "email_002", "Bob takes over payments on May 1."),
-        ]
+def terms(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 2 and w not in STOPWORDS}
 
-    def find_facts(self, entity: str, predicate: str) -> list[Evidence]:
-        return [f for f in self.facts if f.subject == entity and f.predicate == predicate]
-
-def retrieve(plan: QueryPlan, memory: MemoryReader, today: date) -> list[Evidence]:
-    if plan.question_type == "unsupported" or not plan.entity or not plan.predicate:
-        return []
-    target = plan.reference_date if plan.reference_date is not None else today
-    return [f for f in memory.find_facts(plan.entity, plan.predicate)
-            if f.valid_from <= target and (f.valid_to is None or target < f.valid_to)]
+def retrieve(plan: QueryPlan, state: Path, top_k: int = 8) -> list[Evidence]:
+    db = state / "chronicle_adapter.sqlite3"
+    if not db.exists():
+        raise FileNotFoundError(f"Ingest corpus before answering: {db}")
+    query_terms = terms(plan.question)
+    with sqlite3.connect(db) as conn:
+        rows = conn.execute("SELECT doc_id, doc_date, subject, body FROM documents").fetchall()
+    results = []
+    for doc_id, doc_date, subject, body in rows:
+        content = f"{subject or ''} {body or ''}"
+        doc_terms = terms(content)
+        overlap = len(query_terms & doc_terms)
+        if overlap:
+            # Dates here are metadata, not validity intervals. Never pretend
+            # document date alone establishes the correct historical state.
+            results.append(Evidence(doc_id=doc_id, text=content[:5000], date=doc_date or "", score=float(overlap)))
+    results.sort(key=lambda e: (e.score, e.date), reverse=True)
+    return results[:top_k]

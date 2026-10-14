@@ -1,5 +1,8 @@
 {
   "name": "chronicle",
-  "version": "0.1.0",
-  "description": "Chronicle temporal memory benchmark adapter"
+  "description": "Chronicle P3 baseline: raw-document retrieval and model-based answers. Replace with temporal store for full system.",
+  "model": "SET_TO_ACTUAL_MODEL_ID",
+  "accounting": "proxy",
+  "ingest": ["python", "adapters/chronicle/ingest.py", "--corpus", "{corpus}", "--state", "{state}"],
+  "answer": ["python", "adapters/chronicle/answer.py", "--state", "{state}"]
 }

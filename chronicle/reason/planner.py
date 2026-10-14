@@ -1,14 +1,20 @@
+"""Rule-based starter planner. Replace/augment with structured Nemotron planning."""
 import re
 from datetime import date
 from .models import QueryPlan
 
-DATE_PATTERN = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+ISO_DATE = re.compile(r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)")
 
 def plan_query(question: str) -> QueryPlan:
-    """Minimal rule-based planner; expand using Nemotron later."""
-    q = question.lower()
-    date_match = DATE_PATTERN.search(q)
-    reference_date = date.fromisoformat(date_match.group(1)) if date_match else None
-    if "payment" not in q or not any(word in q for word in ("manager", "manage", "owner", "own")):
-        return QueryPlan("unsupported", None, None, reference_date)
-    return QueryPlan("as_of" if reference_date else "current", "payments", "manager", reference_date)
+    match = ISO_DATE.search(question)
+    ref = date.fromisoformat(match.group(1)) if match else None
+    lower = question.lower()
+    if ref:
+        kind = "as_of"
+    elif any(word in lower for word in ("before", "after", "earlier than", "later than")):
+        kind = "ordering_or_history"
+    elif any(word in lower for word in ("currently", "now", "latest", "current")):
+        kind = "current"
+    else:
+        kind = "search"
+    return QueryPlan(question=question, kind=kind, reference_date=ref)
