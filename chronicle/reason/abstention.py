@@ -1,5 +1,5 @@
-"""Abstention policy."""
+from .models import Evidence
 
-
-def should_abstain(memories: list, *, minimum: int = 1) -> bool:
-    return len(memories) < minimum
+def has_unambiguous_support(evidence: list[Evidence]) -> bool:
+    """Conservative: abstain on no evidence or conflicting values."""
+    return bool(evidence) and len({f.object for f in evidence}) == 1
