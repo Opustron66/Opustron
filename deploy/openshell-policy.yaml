@@ -1,0 +1,4 @@
+version: 1
+policy:
+  network: deny-by-default
+  filesystem: read-only
