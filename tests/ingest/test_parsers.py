@@ -118,3 +118,17 @@ def test_parse_whatsapp_multiline(tmp_path):
     docs = parse_whatsapp(p)
     assert [d.doc_date for d in docs] == [date(2026, 4, 17), date(2026, 4, 18)]
     assert "second line" in docs[0].text
+
+
+def test_parse_ics(tmp_path):
+    from chronicle.ingest.parsers.calendar import parse_ics
+
+    p = tmp_path / "c.ics"
+    p.write_text(
+        "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//t//EN\nBEGIN:VEVENT\nUID:u1\n"
+        "DTSTAMP:20260410T080000Z\nDTSTART:20260420T090000Z\nDTEND:20260420T100000Z\n"
+        "SUMMARY:Payments review\nLOCATION:Room 4\nEND:VEVENT\nEND:VCALENDAR\n"
+    )
+    (doc,) = parse_ics(p)
+    assert doc.doc_id == "C:u1" and doc.doc_date == date(2026, 4, 10)
+    assert doc.metadata["start"] == "2026-04-20" and "Room 4" in doc.text
