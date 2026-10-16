@@ -35,7 +35,7 @@ def test_extract_stamps_with_document_date_and_drops_hallucinations():
     assert len(claims) == 2 and ex.dropped == 1
     assert all(c.observed_at == date(2026, 5, 12) and c.doc_id == "E:1" for c in claims)
     assert claims[0].valid_from == date(2026, 5, 12)
-    assert claims[1].valid_from == date(2026, 5, 15)  # "next Friday" vs doc date, not today
+    assert claims[1].valid_from == date(2026, 5, 22)  # "next Friday" = Friday of next week, vs doc date not today
 
 
 def test_cache_makes_rerun_free(tmp_path):

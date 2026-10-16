@@ -2,7 +2,7 @@
 
 Never uses the wall clock: ``reference`` is always the source document's date.
 Conventions (documented because they are ambiguous in English):
-  * ``next <weekday>``  -> first such weekday strictly after the reference date
+  * ``next <weekday>``  -> that weekday in the NEXT calendar week (Mon-Sun week after the reference's)
   * ``last <weekday>``  -> most recent such weekday strictly before it
   * ``this <weekday>`` / bare ``<weekday>`` -> first such weekday on/after it (bare = lower confidence)
 Order of resolution: exact ISO -> rules -> dateparser (RELATIVE_BASE=reference) -> optional LLM fallback.
@@ -113,7 +113,7 @@ def _rules(text: str, ref: date, cfg: NormalizerConfig) -> Resolved | None:
     if m := re.fullmatch(r"(next|last|this|previous) (\w+)", t) and t.split()[1] in WEEKDAYS:
         mod, wd = t.split()[0], WEEKDAYS[t.split()[1]]
         if mod == "next":
-            return Resolved(_weekday_after(ref, wd, strict=True))
+            return Resolved(ref - timedelta(days=ref.weekday()) + timedelta(weeks=1, days=wd))
         if mod in ("last", "previous"):
             return Resolved(_weekday_before(ref, wd))
         return Resolved(_weekday_after(ref, wd, strict=False), confidence=0.9)
