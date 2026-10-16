@@ -63,7 +63,7 @@ def parse_llm_json(raw: str) -> list[dict[str, Any]]:
     data, _ = json.JSONDecoder().raw_decode(text[start:])
     claims = data.get("claims") if isinstance(data, dict) else data
     if not isinstance(claims, list):
-        raise ValueError("reply has no claims list")
+        raise ValueError("reply has no claims list")  # noqa: TRY004 - retried by caller
     return [c for c in claims if isinstance(c, dict)]
 
 
