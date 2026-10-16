@@ -45,6 +45,13 @@ PREDICATE_SYNONYMS: dict[str, str] = {
     "owns_role": "role",
     "has_role": "role",
     "due": "deadline",
+    # rename / refactoring suggestions
+    "proposed_rename": "proposed",
+    "renamed_to": "decided",
+    "renamed": "decided",
+    "refactored_to": "decided",
+    "moved_to": "decided",
+    "changed_to": "decided",
 }
 
 # Subjects that look like code artefacts rather than entities
@@ -135,8 +142,18 @@ CLAIMS_SCHEMA = {
     },
 }
 
-# Strips [ts=…] and (thread reply to …) noise from Slack lines
-_TS_NOISE = re.compile(r"\s*\[ts=[^\]]+\]|\s*\(thread reply to [^\)]+\)")
+# Strips Slack rendering noise:
+#   [2026-04-21T15:00:24Z]   ISO timestamp prefix at line start
+#   (U200C6EF237B)           Slack user-id token in speaker prefix
+#   [ts=…]                   raw ts= marker
+#   (thread reply to …)      thread-reply annotation
+_TS_NOISE = re.compile(
+    r"^\s*\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\]\s*"  # leading ISO timestamp
+    r"|\s*\(U[A-Z0-9]{6,20}\)"                            # slack user-id (Uxxx)
+    r"|\s*\[ts=[^\]]+\]"                                  # [ts=…]
+    r"|\s*\(thread reply to [^)]+\)",                     # thread-reply note
+    re.MULTILINE,
+)
 
 
 class LLM(Protocol):
@@ -203,7 +220,8 @@ def _normalize_subject(subject: str, predicate: str) -> str | None:
     # Allow MR !284 / issue #284 if predicate is status/completed/proposed
     mr = _MR_RE.match(subject)
     if mr:
-        if predicate in ("status", "completed", "proposed"):
+        _MR_OK = {"status", "completed", "proposed", "deadline", "blocked_by", "assigned_to", "requested"}
+        if predicate in _MR_OK:
             kind = "MR" if subject.startswith("!") else "issue"
             return f"{kind} {subject}"
         return None
