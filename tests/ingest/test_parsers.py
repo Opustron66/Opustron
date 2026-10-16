@@ -91,3 +91,30 @@ def test_parse_mbox(tmp_path):
     p.write_text("From a@example.test Fri Apr 17 10:00:00 2026\n" + EML)
     docs = parse_mbox(p)
     assert len(docs) == 1 and docs[0].doc_date == date(2026, 4, 17)
+
+
+def test_parse_slack_groups_by_day(tmp_path):
+    import json
+
+    from chronicle.ingest.parsers.chat import parse_slack
+
+    p = tmp_path / "general.json"
+    p.write_text(json.dumps([
+        {"user": "bob", "text": "hi", "ts": "1776330000"},
+        {"user": "amy", "text": "yo", "ts": "1776333600"},
+        {"user": "amy", "text": "next day", "ts": "1776430000"},
+        {"text": ""},
+    ]))
+    docs = parse_slack(p, channel="general")
+    assert len(docs) == 2 and docs[0].doc_id.startswith("S:general@2026-04-1")
+    assert docs[0].metadata["message_count"] == 2
+
+
+def test_parse_whatsapp_multiline(tmp_path):
+    from chronicle.ingest.parsers.chat import parse_whatsapp
+
+    p = tmp_path / "grp.txt"
+    p.write_text("17/04/2026, 10:00 - Bob: hello\nsecond line\n18/04/2026, 09:00 - Amy: bye\n")
+    docs = parse_whatsapp(p)
+    assert [d.doc_date for d in docs] == [date(2026, 4, 17), date(2026, 4, 18)]
+    assert "second line" in docs[0].text
