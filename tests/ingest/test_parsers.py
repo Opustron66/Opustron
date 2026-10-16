@@ -66,3 +66,28 @@ def test_manifest_fills_missing_date(tmp_path):
     )
     (doc,) = iter_documents(tmp_path)
     assert doc.doc_id == "E:x" and doc.doc_date == date(2026, 4, 20)
+
+
+EML = (
+    "Message-ID: <m1@example.test>\nDate: Fri, 17 Apr 2026 10:00:00 +0000\n"
+    "From: a@example.test\nTo: b@example.test\nSubject: Hello\n\nBody text here.\n"
+)
+
+
+def test_parse_eml(tmp_path):
+    from chronicle.ingest.parsers.email import parse_eml
+
+    p = tmp_path / "a.eml"
+    p.write_text(EML)
+    doc = parse_eml(p)
+    assert doc.doc_id == "m1@example.test" and doc.doc_date == date(2026, 4, 17)
+    assert "Body text here." in doc.text and doc.kind == "email"
+
+
+def test_parse_mbox(tmp_path):
+    from chronicle.ingest.parsers.email import parse_mbox
+
+    p = tmp_path / "box.mbox"
+    p.write_text("From a@example.test Fri Apr 17 10:00:00 2026\n" + EML)
+    docs = parse_mbox(p)
+    assert len(docs) == 1 and docs[0].doc_date == date(2026, 4, 17)
