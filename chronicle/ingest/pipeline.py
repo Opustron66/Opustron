@@ -89,7 +89,7 @@ def run_ingest(documents: Iterable[Document], state: Path, llm: LLM, *, model: s
             done_path.write_text(json.dumps(sorted(done)))
             stats.documents += 1
             stats.claims += len(extracted)
-    stats.dropped, stats.cache_hits, stats.cache_misses = extractor.dropped, cache.hits, cache.misses
+    stats.dropped, stats.cache_hits, stats.cache_misses = extractor.dropped_total, cache.hits, cache.misses
     return stats
 
 

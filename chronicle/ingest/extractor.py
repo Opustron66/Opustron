@@ -3,43 +3,116 @@
 import json
 import re
 import threading
+from collections import Counter
 from typing import Any, Protocol
 
 from chronicle.schema import Claim, Document, Entity, Event
 
 from .cache import DiskCache, cache_key
+from .roster import Roster
 from .temporal_normalizer import NormalizerConfig, resolve
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
 
+# Controlled predicate vocabulary.  ``related_to`` is intentionally absent.
 PREDICATES = [
-    "owns", "works_on", "works_at", "reports_to", "status", "deadline", "scheduled_for",
-    "located_in", "decided", "proposed", "completed", "blocked_by", "member_of", "role", "related_to",
+    "owns", "role", "works_on", "member_of", "reports_to", "assigned_to",
+    "status", "decided", "proposed", "completed", "requested",
+    "deadline", "scheduled_for", "located_in", "blocked_by",
 ]
+# attr:<snake_key> is also valid (e.g. attr:budget, attr:p95_latency)
+_ATTR_RE = re.compile(r"^attr:[a-z0-9_]+$")
 
-SYSTEM_PROMPT = f"""You extract atomic factual claims from one document.
-The document was written on {{doc_date}}. Resolve every relative date ("next Friday", "yesterday")
+# Near-miss synonyms the model sometimes uses -> canonical predicate
+PREDICATE_SYNONYMS: dict[str, str] = {
+    "organized_by": "owns",
+    "organizer": "owns",
+    "owns_by": "owns",
+    "led_by": "owns",
+    "managed_by": "owns",
+    "invitee": "member_of",
+    "attendee": "member_of",
+    "assigned": "assigned_to",
+    "assigned_to_person": "assigned_to",
+    "taking_over": "owns",
+    "takes_over": "owns",
+    "handover": "owns",
+    "is_blocked_by": "blocked_by",
+    "blocks": "blocked_by",
+    "approved": "decided",
+    "rejected": "decided",
+    "presented": "proposed",
+    "owns_role": "role",
+    "has_role": "role",
+    "due": "deadline",
+}
+
+# Subjects that look like code artefacts rather than entities
+_NON_ENTITY_RE = re.compile(
+    r"^(https?://|/[\w/]|\.{0,2}/|`|\!?\d+|[A-Za-z0-9]{7,40}(?:[A-Za-z]\d|\d[A-Za-z])[A-Za-z0-9]{7,}$)"
+)
+# MR / issue / PR normaliser
+_MR_RE = re.compile(r"^[!#](\d+)$")
+
+# Bot / automated-sender patterns
+_BOT_FROM = re.compile(r"(gitlab|review-bot|metricswatch|no-reply|noreply|ops-notifications|itsupport)",
+                       re.IGNORECASE)
+
+_SYSTEM_BASE = """\
+The document was written on {doc_date}. Resolve every relative date ("next Friday", "yesterday")
 against THAT date, never today's date. Output ONLY JSON: {{"claims": [...]}} with no commentary.
 Each claim: subject, predicate, object, valid_from, valid_to, quote, confidence (0-1).
 - One fact per claim. Subject/object are canonical entity names (no pronouns).
-- predicate: one of {PREDICATES} (use related_to only if nothing fits).
-- valid_from / valid_to: the date expression exactly as written in the text (e.g. "next Friday",
-  "2026-05-12", "today") or null. valid_from = when the fact starts being true; valid_to = when it ends.
-- Deadlines and scheduled events: subject = the thing, predicate = deadline/scheduled_for,
-  object = a short description of what is due or happening (NOT the date), and the date goes in
-  valid_from. Example: "The migration is due next Friday" -> subject "migration", predicate
-  "deadline", object "due", valid_from "next Friday", valid_to null.
-- Changes of ownership/role (takeovers, handovers, reassignments) need TWO claims:
-  1. the NEW state: new person, predicate owns (or role/works_on), the thing, valid_from = the
-     effective date ("today" if "effective today"), valid_to null;
-  2. the OLD state ending: old person, same predicate, same thing, valid_from null, valid_to = the
-     same effective date.
-  Example: "Effective today, Dana takes over payments from Alice" -> (Dana, owns, payments,
-  valid_from "today", null) and (Alice, owns, payments, null, valid_to "today").
-- quote: a VERBATIM span copied from the document that supports the claim; reuse the same quote
-  for both claims of a change.
-- Include who proposed vs who did when the text distinguishes them (predicate proposed vs completed).
-- Do not invent facts the document does not state. If there are none, return {{"claims": []}}."""
+- predicate: one of {predicates}
+  or attr:<snake_key> for measured values (e.g. attr:budget, attr:p95_latency).
+  Use attr:<key> only when the document states a specific value.
+  Do NOT use related_to — if nothing fits, omit the claim.
+- valid_from / valid_to: the date expression exactly as written (e.g. "next Friday",
+  "2026-05-12", "today") or null. valid_from = when the fact starts; valid_to = when it ends.
+- Deadlines/scheduled events: subject = the thing, predicate = deadline/scheduled_for,
+  object = short description of what is due, date goes in valid_from.
+  Example: "migration due next Friday" -> subject "migration", predicate "deadline",
+  object "due", valid_from "next Friday", valid_to null.
+- Changes of ownership/role/assignment need TWO claims:
+  1. NEW state: new person, predicate (owns/role/assigned_to), the thing,
+     valid_from = effective date, valid_to null.
+  2. OLD state ending: old person, same predicate, same thing,
+     valid_from null, valid_to = same effective date.
+  Use the same verbatim quote for both.
+- quote: a VERBATIM span from the document supporting the claim.
+  Quotes from the document header (From/To/Subject lines) are valid.
+- Include who proposed vs who completed when the text distinguishes them.
+- Do NOT extract from lines starting with > (quoted text from a prior message).
+- Do not invent facts the document does not state. If there are none, return {{"claims": []}}.\
+"""
+
+SYSTEM_PROMPT_HUMAN = (
+    "You extract atomic factual claims from one document.\n"
+    + _SYSTEM_BASE
+    + """
+Priority order — extract FIRST:
+  1. Ownership/role/assignment changes (paired new+old as described above)
+  2. Decisions, proposals, completions
+  3. Status changes and blockers
+  4. Deadlines and scheduled events
+  5. Numeric/config values (attr:)
+  6. Stable facts (membership, location, reporting lines)
+Skip greetings, opinions, reactions, and chit-chat.\
+"""
+)
+
+SYSTEM_PROMPT_AUTOMATED = (
+    "You extract factual events from an automated notification.\n"
+    + _SYSTEM_BASE
+    + """
+Extract at most 5 claims, only for significant events:
+  - MR/PR opened, merged, or closed: who + which item -> predicate proposed/completed/status
+  - Pipeline or build failed/passed -> status
+  - Incident opened/resolved -> status
+  - Alert threshold crossed -> attr:<metric>
+Do NOT extract: file lists, commit messages, diff stats, code snippets, review comments.\
+"""
+)
 
 CLAIMS_SCHEMA = {
     "name": "claims",
@@ -48,15 +121,22 @@ CLAIMS_SCHEMA = {
         "properties": {"claims": {"type": "array", "items": {
             "type": "object",
             "properties": {
-                "subject": {"type": "string"}, "predicate": {"type": "string"}, "object": {"type": "string"},
-                "valid_from": {"type": ["string", "null"]}, "valid_to": {"type": ["string", "null"]},
-                "quote": {"type": "string"}, "confidence": {"type": "number"},
+                "subject": {"type": "string"},
+                "predicate": {"type": "string"},
+                "object": {"type": "string"},
+                "valid_from": {"type": ["string", "null"]},
+                "valid_to": {"type": ["string", "null"]},
+                "quote": {"type": "string"},
+                "confidence": {"type": "number"},
             },
             "required": ["subject", "predicate", "object", "quote"],
         }}},
         "required": ["claims"],
     },
 }
+
+# Strips [ts=…] and (thread reply to …) noise from Slack lines
+_TS_NOISE = re.compile(r"\s*\[ts=[^\]]+\]|\s*\(thread reply to [^\)]+\)")
 
 
 class LLM(Protocol):
@@ -94,20 +174,124 @@ def _squash(s: str) -> str:
     return re.sub(r"[\W_]+", "", re.sub(r"\]\([^)]*\)", "", s)).lower()
 
 
+def classify_doc(doc: Document) -> str:
+    """Return ``"automated"`` for bot/notification emails; ``"human"`` otherwise."""
+    folder = str(doc.metadata.get("folder") or "")
+    if folder == "inbox-automated":
+        return "automated"
+    sender = str(doc.metadata.get("from") or "")
+    if _BOT_FROM.search(sender):
+        return "automated"
+    return "human"
+
+
+def _normalize_predicate(pred: str) -> str | None:
+    """Map to controlled vocabulary; return None if unrecognisable."""
+    pred = pred.strip().lower()
+    if pred in PREDICATES:
+        return pred
+    if _ATTR_RE.match(pred):
+        return pred
+    if pred in PREDICATE_SYNONYMS:
+        return PREDICATE_SYNONYMS[pred]
+    return None
+
+
+def _normalize_subject(subject: str, predicate: str) -> str | None:
+    """Return a cleaned subject or None if it looks like a code artefact."""
+    subject = subject.strip()
+    # Allow MR !284 / issue #284 if predicate is status/completed/proposed
+    mr = _MR_RE.match(subject)
+    if mr:
+        if predicate in ("status", "completed", "proposed"):
+            kind = "MR" if subject.startswith("!") else "issue"
+            return f"{kind} {subject}"
+        return None
+    if _NON_ENTITY_RE.match(subject):
+        return None
+    return subject
+
+
+def _build_header(doc: Document, roster: Roster | None) -> str:
+    """Render a compact header line for the LLM prompt."""
+    meta = doc.metadata
+    lines: list[str] = []
+    if doc.kind == "email":
+        if meta.get("from"):
+            lines.append(f"From: {meta['from']}")
+        if meta.get("to"):
+            to_val = meta["to"]
+            if isinstance(to_val, list):
+                to_val = ", ".join(str(v) for v in to_val)
+            lines.append(f"To: {to_val}")
+        if meta.get("cc"):
+            cc_val = meta["cc"]
+            if isinstance(cc_val, list):
+                cc_val = ", ".join(str(v) for v in cc_val if v)
+            if cc_val:
+                lines.append(f"Cc: {cc_val}")
+        if meta.get("subject"):
+            lines.append(f"Subject: {meta['subject']}")
+        if meta.get("folder"):
+            lines.append(f"Folder: {meta['folder']}")
+    elif doc.kind in ("slack", "chat"):
+        ch = meta.get("channel_name") or meta.get("channel") or ""
+        if ch:
+            lines.append(f"Channel: #{ch}")
+    return "\n".join(lines)
+
+
+def render_for_llm(doc: Document, roster: Roster | None = None) -> str:
+    """Build the text the LLM receives: optional header + cleaned body.
+
+    Changes vs. raw document text:
+    - Email and Slack headers are prepended so attribution is visible.
+    - ``<@Uxxx>`` Slack mentions are replaced with names.
+    - ``[ts=…]`` and ``(thread reply to …)`` clutter is stripped.
+    - If a roster is supplied, a "Known people:" hint is appended.
+    """
+    header = _build_header(doc, roster)
+    body = doc.text
+
+    # Replace Slack user id mentions with names
+    if roster:
+        body = roster.render(body)
+
+    # Strip [ts=…] and thread-reply noise
+    body = _TS_NOISE.sub("", body)
+
+    parts = []
+    if header:
+        parts.append(header)
+    parts.append(body)
+
+    if roster and roster.people:
+        known = ", ".join(roster.people[:30])  # cap to avoid huge prompts
+        parts.append(f"\nKnown people: {known}")
+
+    return "\n".join(parts)
+
+
 class ClaimExtractor:
     def __init__(self, llm: LLM, *, model: str = "nemotron", cache: DiskCache | None = None,
-                 config: NormalizerConfig | None = None) -> None:
+                 config: NormalizerConfig | None = None, roster: Roster | None = None) -> None:
         self.llm, self.model, self.cache, self.config = llm, model, cache, config
-        self.dropped = 0  # claims rejected (hallucinated quote / invalid)
+        self.roster = roster
+        self.dropped: Counter[str] = Counter()
         self._lock = threading.Lock()
 
     def _raw_claims(self, doc: Document) -> list[dict[str, Any]]:
-        key = cache_key(self.model, PROMPT_VERSION, doc.doc_date.isoformat() if doc.doc_date else "", doc.text)
+        doc_kind = classify_doc(doc)
+        rendered = render_for_llm(doc, self.roster)
+        key = cache_key(self.model, PROMPT_VERSION, doc.doc_date.isoformat() if doc.doc_date else "",
+                        rendered, doc_kind)
         if self.cache and (hit := self.cache.get(key)) is not None:
             return hit
+        prompt = SYSTEM_PROMPT_HUMAN if doc_kind == "human" else SYSTEM_PROMPT_AUTOMATED
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT.replace("{doc_date}", str(doc.doc_date))},
-            {"role": "user", "content": doc.text},
+            {"role": "system", "content": prompt.replace("{doc_date}", str(doc.doc_date))
+             .replace("{predicates}", str(PREDICATES))},
+            {"role": "user", "content": rendered},
         ]
         try:
             raw = parse_llm_json(self.llm.complete(messages, CLAIMS_SCHEMA))
@@ -121,26 +305,52 @@ class ClaimExtractor:
     def extract(self, doc: Document) -> list[Claim]:
         if doc.doc_date is None:
             raise ValueError(f"{doc.doc_id}: document has no date; refusing to stamp with ingestion time")
-        haystack = _squash(doc.text)
+        rendered = render_for_llm(doc, self.roster)
+        haystack = _squash(rendered)
         claims = []
         for c in self._raw_claims(doc):
-            quote = str(c.get("quote") or "").strip()
-            if not all(c.get(k) for k in ("subject", "predicate", "object")) or _squash(quote) not in haystack or not quote:
+            if not all(c.get(k) for k in ("subject", "predicate", "object")):
                 with self._lock:
-                    self.dropped += 1
+                    self.dropped["missing_field"] += 1
                 continue
+
+            quote = str(c.get("quote") or "").strip()
+            if not quote or _squash(quote) not in haystack:
+                with self._lock:
+                    self.dropped["quote"] += 1
+                continue
+
+            pred = _normalize_predicate(str(c["predicate"]))
+            if pred is None:
+                with self._lock:
+                    self.dropped["predicate"] += 1
+                continue
+
+            subj = _normalize_subject(str(c["subject"]), pred)
+            if subj is None:
+                with self._lock:
+                    self.dropped["non_entity"] += 1
+                continue
+
             start = resolve(c.get("valid_from"), doc.doc_date, config=self.config)
             end = resolve(c.get("valid_to"), doc.doc_date, config=self.config)
             conf = float(c.get("confidence") or 1.0)
             if c.get("valid_from") and start.start is None:
                 conf = min(conf, 0.4)
             claims.append(Claim(
-                subject=str(c["subject"]).strip(), predicate=str(c["predicate"]).strip().lower(),
-                object=str(c["object"]).strip(), valid_from=start.start or (None if end.start else doc.doc_date),  # closing claim: start unknown
-                valid_to=end.start if end.start else None, observed_at=doc.doc_date,
-                doc_id=doc.doc_id, quote=quote, confidence=max(0.0, min(1.0, conf * min(start.confidence or 1, 1))),
+                subject=subj, predicate=pred,
+                object=str(c["object"]).strip(),
+                valid_from=start.start or (None if end.start else doc.doc_date),
+                valid_to=end.start if end.start else None,
+                observed_at=doc.doc_date,
+                doc_id=doc.doc_id, quote=quote,
+                confidence=max(0.0, min(1.0, conf * min(start.confidence or 1, 1))),
             ))
         return claims
+
+    @property
+    def dropped_total(self) -> int:
+        return sum(self.dropped.values())
 
 
 def extract_entities(event: Event) -> list[Entity]:

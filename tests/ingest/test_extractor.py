@@ -32,7 +32,7 @@ GOOD = json.dumps({"claims": [
 def test_extract_stamps_with_document_date_and_drops_hallucinations():
     ex = ClaimExtractor(FakeLLM([GOOD]))
     claims = ex.extract(DOC)
-    assert len(claims) == 2 and ex.dropped == 1
+    assert len(claims) == 2 and ex.dropped_total == 1
     assert all(c.observed_at == date(2026, 5, 12) and c.doc_id == "E:1" for c in claims)
     assert claims[0].valid_from == date(2026, 5, 12)
     assert claims[1].valid_from == date(2026, 5, 22)  # "next Friday" = Friday of next week, vs doc date not today
@@ -101,6 +101,7 @@ def test_closing_claim_keeps_start_unknown():
 
 
 def test_quote_check_ignores_markdown_formatting_but_not_content():
+    """related_to is now off-vocabulary (dropped at predicate); Bob's quote is hallucinated (dropped at quote)."""
     doc = DOC.model_copy(update={"text": "**Branch:** `feature/x` → main\n- [Alice Chen](http://u) owns it"})
     reply = json.dumps({"claims": [
         {"subject": "x", "predicate": "related_to", "object": "main", "quote": "Branch: feature/x → main"},
@@ -108,4 +109,8 @@ def test_quote_check_ignores_markdown_formatting_but_not_content():
         {"subject": "Bob", "predicate": "owns", "object": "it", "quote": "Bob owns it"},
     ]})
     ex = ClaimExtractor(FakeLLM([reply]))
-    assert len(ex.extract(doc)) == 2 and ex.dropped == 1
+    claims = ex.extract(doc)
+    assert len(claims) == 1  # only Alice's claim passes
+    assert ex.dropped["predicate"] >= 1  # related_to dropped
+    assert ex.dropped["quote"] >= 1  # Bob's hallucinated quote dropped
+    assert ex.dropped_total == 2
