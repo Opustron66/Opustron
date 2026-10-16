@@ -62,3 +62,31 @@ def test_resolve_claim_rewrites_subject_and_known_object():
     assert out.subject == "Alice Chen" and out.object == "Alice Chen"
     plain = r.resolve_claim(c.model_copy(update={"object": "the payments service"}))
     assert plain.object == "the payments service"
+
+
+# ---------------------------------------------------------------------------
+# v3 alias normalisation: @, _ and . variants
+# ---------------------------------------------------------------------------
+
+def test_at_handle_resolves():
+    r = EntityResolver(aliases={"alex": "Alex Chen"})
+    assert r.resolve("@alex") == "Alex Chen"
+
+
+def test_underscore_variant_resolves():
+    r = EntityResolver(aliases={"alex chen": "Alex Chen"})
+    assert r.resolve("alex_chen") == "Alex Chen"
+
+
+def test_dot_variant_resolves():
+    r = EntityResolver(aliases={"alex chen": "Alex Chen"})
+    assert r.resolve("alex.chen") == "Alex Chen"
+
+
+def test_resolve_claim_object_via_alias():
+    r = EntityResolver(aliases={"@dana": "Dana Lee", "dana lee": "Dana Lee"})
+    r.resolve("Dana Lee")
+    c = Claim(subject="someone", predicate="reports_to", object="@dana",
+              doc_id="d", quote="q", observed_at=date(2026, 1, 1))
+    out = r.resolve_claim(c)
+    assert out.object == "Dana Lee"

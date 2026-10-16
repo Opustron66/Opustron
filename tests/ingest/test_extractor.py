@@ -114,3 +114,136 @@ def test_quote_check_ignores_markdown_formatting_but_not_content():
     assert ex.dropped["predicate"] >= 1  # related_to dropped
     assert ex.dropped["quote"] >= 1  # Bob's hallucinated quote dropped
     assert ex.dropped_total == 2
+
+# ---------------------------------------------------------------------------
+# New v3 tests: rendering, roster, classifier, predicate enforcement
+# ---------------------------------------------------------------------------
+
+def test_email_header_included_in_rendered_prompt():
+    """The model should see From/To/Subject so it can attribute claims correctly."""
+    from chronicle.ingest.extractor import render_for_llm
+    doc = Document(doc_id="E:1", text="Dana takes over payments from Alice.",
+                   doc_date=date(2026, 5, 12), kind="email",
+                   metadata={"from": "Alex Chen (@alex) <alex.chen@example.com>",
+                              "to": ["Dana Lee (@dana) <dana.lee@example.com>"],
+                              "subject": "Payments handover"})
+    rendered = render_for_llm(doc)
+    assert "From: Alex Chen" in rendered
+    assert "Subject: Payments handover" in rendered
+    assert "Dana takes over payments" in rendered
+
+
+def test_slack_mention_replaced_in_rendered_text():
+    from chronicle.ingest.extractor import render_for_llm
+    from chronicle.ingest.roster import Roster
+    roster = Roster(slack_ids={"U20094F0C2DD": "Lena Park"},
+                    aliases={"lena park": "Lena Park"}, people=["Lena Park"])
+    doc = Document(doc_id="S:1", text="can you look <@U20094F0C2DD>?",
+                   doc_date=date(2026, 4, 21), kind="slack")
+    rendered = render_for_llm(doc, roster)
+    assert "Lena Park" in rendered
+    assert "<@U20094F0C2DD>" not in rendered
+
+
+def test_ts_noise_stripped():
+    from chronicle.ingest.extractor import render_for_llm
+    doc = Document(doc_id="S:1",
+                   text="Sam Iverson (U200C6) [ts=1776761863.394136]: hello\nreply [ts=abc] done",
+                   doc_date=date(2026, 4, 21), kind="slack")
+    rendered = render_for_llm(doc)
+    assert "[ts=" not in rendered
+
+
+def test_classify_automated_folder():
+    from chronicle.ingest.extractor import classify_doc
+    doc = Document(doc_id="E:1", text="", doc_date=date(2026, 4, 16), kind="email",
+                   metadata={"folder": "inbox-automated"})
+    assert classify_doc(doc) == "automated"
+
+
+def test_classify_bot_sender():
+    from chronicle.ingest.extractor import classify_doc
+    doc = Document(doc_id="E:1", text="", doc_date=date(2026, 4, 16), kind="email",
+                   metadata={"from": "GitLab <gitlab@example.com>"})
+    assert classify_doc(doc) == "automated"
+
+
+def test_classify_human_email():
+    from chronicle.ingest.extractor import classify_doc
+    doc = Document(doc_id="E:1", text="", doc_date=date(2026, 4, 16), kind="email",
+                   metadata={"from": "Alex Chen (@alex) <alex.chen@example.com>", "folder": "inbox"})
+    assert classify_doc(doc) == "human"
+
+
+def test_off_vocabulary_predicate_dropped():
+    reply = json.dumps({"claims": [
+        {"subject": "Alice Chen", "predicate": "invitee", "object": "standup",
+         "quote": "Alice Chen owns the payments service."},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    # invitee -> member_of via PREDICATE_SYNONYMS, should NOT be dropped
+    claims = ex.extract(DOC)
+    assert any(c.predicate == "member_of" for c in claims)
+
+
+def test_truly_unknown_predicate_dropped():
+    reply = json.dumps({"claims": [
+        {"subject": "Alice Chen", "predicate": "totally_made_up", "object": "something",
+         "quote": "Alice Chen owns the payments service."},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    assert ex.extract(DOC) == []
+    assert ex.dropped["predicate"] == 1
+
+
+def test_attr_predicate_accepted():
+    reply = json.dumps({"claims": [
+        {"subject": "atlas", "predicate": "attr:p95_latency", "object": "120ms",
+         "quote": "Alice Chen owns the payments service."},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    claims = ex.extract(DOC)
+    assert len(claims) == 1 and claims[0].predicate == "attr:p95_latency"
+
+
+def test_non_entity_subject_dropped():
+    """A URL or file path as subject should be rejected."""
+    reply = json.dumps({"claims": [
+        {"subject": "https://gitlab.example.com/mr/284", "predicate": "status", "object": "open",
+         "quote": "Alice Chen owns the payments service."},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    assert ex.extract(DOC) == []
+    assert ex.dropped["non_entity"] == 1
+
+
+def test_mr_subject_allowed_for_status():
+    """!284 is a valid subject when predicate is status/completed."""
+    doc = Document(doc_id="E:1",
+                   text="merge request !284 was merged by Alice Chen.",
+                   doc_date=date(2026, 5, 12), kind="email",
+                   metadata={"folder": "inbox-automated",
+                              "from": "GitLab <gitlab@example.com>"})
+    reply = json.dumps({"claims": [
+        {"subject": "!284", "predicate": "completed", "object": "merged",
+         "quote": "merge request !284 was merged by Alice Chen."},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    claims = ex.extract(doc)
+    assert len(claims) == 1
+    assert claims[0].subject == "MR !284"
+
+
+def test_header_quote_passes_verification():
+    """A quote lifted from the rendered header (From/Subject) should verify."""
+    doc = Document(doc_id="E:2", text="See above.",
+                   doc_date=date(2026, 5, 12), kind="email",
+                   metadata={"from": "Alex Chen (@alex) <alex@example.com>",
+                              "subject": "Payments handover update"})
+    reply = json.dumps({"claims": [
+        {"subject": "Alex Chen", "predicate": "proposed", "object": "payments handover",
+         "quote": "Subject: Payments handover update"},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    claims = ex.extract(doc)
+    assert len(claims) == 1

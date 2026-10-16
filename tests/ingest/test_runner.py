@@ -79,3 +79,34 @@ def test_parallel_workers_preserve_order_and_results(tmp_path):
     ingest_corpus(FIX, serial, FakeLLM(), workers=1)
     ingest_corpus(FIX, parallel, FakeLLM(), workers=4)
     assert (serial / "claims.jsonl").read_text() == (parallel / "claims.jsonl").read_text()
+
+
+def test_closings_emitted_across_parts(tmp_path):
+    """Part_a claim superseded by part_b claim produces a closing in the output."""
+    import json as _json
+
+    class HandoverLLM:
+        """Returns an own claim for part_a docs and an owner-change pair for part_b."""
+        def complete(self, messages, schema=None):
+            content = messages[1]["content"]
+            if "Dana Lee" in content:
+                return _json.dumps({"claims": [
+                    {"subject": "Dana Lee", "predicate": "owns", "object": "payments service",
+                     "valid_from": "today", "quote": "Dana Lee takes over the payments service from Alice Chen."},
+                    {"subject": "Alice Chen", "predicate": "owns", "object": "payments service",
+                     "valid_from": None, "valid_to": "today",
+                     "quote": "Dana Lee takes over the payments service from Alice Chen."},
+                ]})
+            quote = content.split(".")[0] + "."
+            return _json.dumps({"claims": [
+                {"subject": "alice chen", "predicate": "owns", "object": "payments service",
+                 "valid_from": "today", "quote": quote}]})
+
+    ingest_corpus(FIX / "part_a", tmp_path, HandoverLLM())
+    ingest_corpus(FIX / "part_b", tmp_path, HandoverLLM())
+
+    claims = read_claims(tmp_path / "claims.jsonl")
+    # There must be at least one claim with valid_to set (a closing)
+    closings = [c for c in claims if c.valid_to is not None]
+    assert len(closings) >= 1
+    assert any(c.subject.lower() in ("alice chen",) for c in closings)

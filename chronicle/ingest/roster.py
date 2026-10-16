@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 from chronicle.schema import Document
 
@@ -50,7 +50,7 @@ class Roster:
                           indent=2, ensure_ascii=False)
 
     @classmethod
-    def from_json(cls, text: str) -> "Roster":
+    def from_json(cls, text: str) -> Roster:
         d = json.loads(text)
         return cls(aliases=d.get("aliases", {}), slack_ids=d.get("slack_ids", {}), people=d.get("people", []))
 

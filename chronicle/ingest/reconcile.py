@@ -19,9 +19,8 @@ Multi-valued predicates (``works_on``, ``member_of``, ``proposed``, ``decided``,
 from __future__ import annotations
 
 import re
-from copy import copy
+from collections.abc import Iterable
 from datetime import date
-from typing import Iterable
 
 from chronicle.schema import Claim
 
@@ -102,9 +101,12 @@ class ReconcileIndex:
                 self._open[key] = c
                 continue
 
-            # Same value → idempotent, just refresh the pointer
-            if old.subject.strip().lower() == c.subject.strip().lower() \
-                    and old.object.strip().lower() == c.object.strip().lower():
+            # Same value → idempotent, just refresh the pointer.
+            # For deadline/scheduled_for the date lives in valid_from, so include it.
+            same_subject = old.subject.strip().lower() == c.subject.strip().lower()
+            same_object = old.object.strip().lower() == c.object.strip().lower()
+            same_date = old.valid_from == c.valid_from
+            if same_subject and same_object and (same_date or old.predicate not in ("deadline", "scheduled_for")):
                 self._open[key] = c
                 continue
 
