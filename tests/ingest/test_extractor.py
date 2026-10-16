@@ -83,3 +83,18 @@ def test_legacy_extract_entities():
 
     ents = extract_entities(Event(content="Met Alice, Bob.", source=Source(uri="u", kind="k")))
     assert [e.name for e in ents] == ["Alice", "Bob"]
+
+
+def test_parse_llm_json_ignores_braces_in_reasoning_text():
+    raw = ('Here\'s a thinking process:\n1. Output {"ok": true} maybe?\n2. Use {"claims": [1]} no.\n'
+           'Final:\n{"claims": [{"subject": "a", "predicate": "owns", "object": "b", "quote": "q"}]}')
+    (c,) = parse_llm_json(raw)
+    assert c["subject"] == "a"
+
+
+def test_closing_claim_keeps_start_unknown():
+    reply = json.dumps({"claims": [
+        {"subject": "Alice Chen", "predicate": "owns", "object": "payments service", "valid_to": "today",
+         "quote": "Alice Chen owns the payments service."}]})
+    (c,) = ClaimExtractor(FakeLLM([reply])).extract(DOC)
+    assert c.valid_from is None and c.valid_to == date(2026, 5, 12)
