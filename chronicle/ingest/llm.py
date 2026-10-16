@@ -29,7 +29,7 @@ class OpenAICompatLLM:
             kwargs["response_format"] = {"type": "json_schema", "json_schema": schema}
         try:
             resp = self.client.chat.completions.create(**kwargs)
-        except Exception as exc:  # noqa: BLE001 - endpoint without json_schema support
+        except Exception:
             if "response_format" not in kwargs:
                 raise
             self.structured = False

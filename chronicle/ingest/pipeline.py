@@ -10,7 +10,7 @@ from chronicle.schema import Claim, Document, Event
 
 from .cache import DiskCache
 from .entity_resolver import EntityResolver, resolve
-from .extractor import ClaimExtractor, LLM, extract_entities
+from .extractor import LLM, ClaimExtractor, extract_entities
 from .parsers.benchmark import iter_documents
 
 CLAIMS_FILE = "claims.jsonl"

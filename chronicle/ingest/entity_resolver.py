@@ -9,7 +9,7 @@ from chronicle.schema import Claim, Entity
 
 MERGE_THRESHOLD = 92  # confident duplicate
 REVIEW_THRESHOLD = 80  # ambiguous band -> LLM tie-break (if provided), else keep separate
-_TITLES = re.compile(r"^(mr|mrs|ms|dr|prof)\.?\s+", re.I)
+_TITLES = re.compile(r"^(mr|mrs|ms|dr|prof)\.?\s+", re.IGNORECASE)
 
 
 def resolve(entities: list[Entity]) -> list[Entity]:

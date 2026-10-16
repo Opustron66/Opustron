@@ -3,7 +3,7 @@
 import json
 import re
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,7 @@ def parse_slack(path: Path, channel: str | None = None) -> list[Document]:
     for m in json.loads(path.read_text(encoding="utf-8")):
         if not m.get("text") or "ts" not in m:
             continue
-        when = datetime.fromtimestamp(float(m["ts"]), tz=timezone.utc)
+        when = datetime.fromtimestamp(float(m["ts"]), tz=UTC)
         by_day[when.date()].append(f"{m.get('user', 'unknown')} ({when:%H:%M}): {m['text']}")
     return [
         Document(doc_id=f"S:{channel}@{day.isoformat()}", text="\n".join(lines), doc_date=day,

@@ -55,7 +55,7 @@ class LLM(Protocol):
 
 def parse_llm_json(raw: str) -> list[dict[str, Any]]:
     """Tolerantly parse the model's reply (strips code fences / <think> blocks)."""
-    text = re.sub(r"<think>.*?</think>", "", raw, flags=re.S).strip()
+    text = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
     start = min((i for i in (text.find("{"), text.find("[")) if i != -1), default=-1)
     if start == -1:

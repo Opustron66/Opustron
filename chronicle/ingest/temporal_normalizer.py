@@ -22,7 +22,7 @@ WEEKDAYS.update({n.lower(): i for i, n in enumerate(calendar.day_abbr)})
 MONTHS = {n.lower(): i for i, n in enumerate(calendar.month_name) if n}
 MONTHS.update({n.lower(): i for i, n in enumerate(calendar.month_abbr) if n})
 NUMBERS = {w: i for i, w in enumerate(
-    "zero one two three four five six seven eight nine ten eleven twelve".split())}
+    ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"])}
 NUMBERS.update({"a": 1, "an": 1, "couple": 2, "few": 3})
 UNITS = r"(day|week|month|year)s?"
 

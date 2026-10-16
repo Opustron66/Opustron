@@ -1,5 +1,4 @@
 import json
-from datetime import date
 from pathlib import Path
 
 from chronicle.ingest.pipeline import ingest_corpus, read_claims, run_ingest

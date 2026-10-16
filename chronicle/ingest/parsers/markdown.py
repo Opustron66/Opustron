@@ -43,7 +43,7 @@ def to_date(value: Any) -> date | None:
         return value
     if isinstance(value, str) and value.strip():
         try:
-            return datetime.fromisoformat(value.strip().replace("Z", "+00:00")).date()
+            return datetime.fromisoformat(value.strip()).date()
         except ValueError:
             return None
     return None

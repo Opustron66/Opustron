@@ -2,7 +2,12 @@ from datetime import date, datetime
 
 import pytest
 
-from chronicle.ingest.temporal_normalizer import NormalizerConfig, Resolved, normalize, resolve
+from chronicle.ingest.temporal_normalizer import (
+    NormalizerConfig,
+    Resolved,
+    normalize,
+    resolve,
+)
 
 REF = date(2026, 5, 12)  # a Tuesday
 
@@ -80,7 +85,7 @@ def test_unresolvable_without_fallback():
 
 
 def test_llm_fallback_used_last():
-    fb = lambda expr, ref: Resolved(date(2026, 6, 1), confidence=0.5, method="llm")  # noqa: E731
+    fb = lambda expr, ref: Resolved(date(2026, 6, 1), confidence=0.5, method="llm")
     assert resolve("when the stars align", REF, llm_fallback=fb).method == "llm"
     assert resolve("tomorrow", REF, llm_fallback=fb).method == "rule"
 
