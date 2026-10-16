@@ -6,7 +6,7 @@ from pathlib import Path
 
 from chronicle.schema import Document, Event, Source
 
-from .markdown import parse_document
+from .markdown import parse_document, to_date
 
 
 def parse(record: dict, *, uri: str = "memory://benchmark") -> Event:
