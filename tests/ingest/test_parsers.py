@@ -35,3 +35,34 @@ def test_parse_document_without_date_falls_back_to_mtime(tmp_path):
     p.write_text("just a note")
     doc = parse_document(p, root=tmp_path)
     assert doc.doc_id == "M:note.md" and doc.metadata["date_source"] == "mtime"
+
+
+def test_iter_documents_orders_parts_and_recurses():
+    from chronicle.ingest.parsers.benchmark import iter_documents
+
+    docs = list(iter_documents(FIX))
+    assert [d.part for d in docs] == ["a", "a", "b"]
+    assert {d.kind for d in docs} == {"email", "slack"}
+    assert docs[-1].doc_id.startswith("E:2026-05-12")
+
+
+def test_iter_documents_single_part_dir():
+    from chronicle.ingest.parsers.benchmark import iter_documents
+
+    docs = list(iter_documents(FIX / "part_b"))
+    assert len(docs) == 1 and docs[0].part == "b"
+
+
+def test_manifest_fills_missing_date(tmp_path):
+    import json
+
+    from chronicle.ingest.parsers.benchmark import iter_documents
+
+    part = tmp_path / "part_a"
+    part.mkdir()
+    (part / "n.md").write_text("no frontmatter")
+    (tmp_path / "manifest.jsonl").write_text(
+        json.dumps({"doc_id": "E:x", "part": "a", "path": "part_a/n.md", "timestamp": "2026-04-20T00:00:00Z"}) + "\n"
+    )
+    (doc,) = iter_documents(tmp_path)
+    assert doc.doc_id == "E:x" and doc.doc_date == date(2026, 4, 20)
