@@ -89,7 +89,9 @@ def parse_llm_json(raw: str) -> list[dict[str, Any]]:
 
 
 def _squash(s: str) -> str:
-    return re.sub(r"\s+", " ", s).strip().lower()
+    """Quote-check normaliser: keeps only letters/digits so markdown (bold, links, bullets,
+    backticks) and whitespace differences never cause a faithful quote to be rejected."""
+    return re.sub(r"[\W_]+", "", re.sub(r"\]\([^)]*\)", "", s)).lower()
 
 
 class ClaimExtractor:

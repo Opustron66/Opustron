@@ -98,3 +98,14 @@ def test_closing_claim_keeps_start_unknown():
          "quote": "Alice Chen owns the payments service."}]})
     (c,) = ClaimExtractor(FakeLLM([reply])).extract(DOC)
     assert c.valid_from is None and c.valid_to == date(2026, 5, 12)
+
+
+def test_quote_check_ignores_markdown_formatting_but_not_content():
+    doc = DOC.model_copy(update={"text": "**Branch:** `feature/x` → main\n- [Alice Chen](http://u) owns it"})
+    reply = json.dumps({"claims": [
+        {"subject": "x", "predicate": "related_to", "object": "main", "quote": "Branch: feature/x → main"},
+        {"subject": "Alice Chen", "predicate": "owns", "object": "it", "quote": "Alice Chen owns it"},
+        {"subject": "Bob", "predicate": "owns", "object": "it", "quote": "Bob owns it"},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    assert len(ex.extract(doc)) == 2 and ex.dropped == 1
