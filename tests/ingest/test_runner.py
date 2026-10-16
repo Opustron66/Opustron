@@ -71,3 +71,11 @@ def test_cli_missing_corpus(tmp_path, capsys):
     from chronicle.ingest.__main__ import main
 
     assert main(["--corpus", str(tmp_path / "nope"), "--state", str(tmp_path)]) == 2
+
+
+def test_parallel_workers_preserve_order_and_results(tmp_path):
+    serial = tmp_path / "s"
+    parallel = tmp_path / "p"
+    ingest_corpus(FIX, serial, FakeLLM(), workers=1)
+    ingest_corpus(FIX, parallel, FakeLLM(), workers=4)
+    assert (serial / "claims.jsonl").read_text() == (parallel / "claims.jsonl").read_text()

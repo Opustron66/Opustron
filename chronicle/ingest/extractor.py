@@ -2,6 +2,7 @@
 
 import json
 import re
+import threading
 from typing import Any, Protocol
 
 from chronicle.schema import Claim, Document, Entity, Event
@@ -71,7 +72,7 @@ def parse_llm_json(raw: str) -> list[dict[str, Any]]:
     contains braces. We strip <think> blocks and code fences, then take the LAST decodable JSON
     value that holds a claims list, since the final answer follows the reasoning.
     """
-    text = re.sub(r"<think>.*?</think>", "", raw, flags=re.S)
+    text = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
     text = re.sub(r"```(?:json)?", "", text)
     decoder, found = json.JSONDecoder(), None
     for m in re.finditer(r"[{\[]", text):
@@ -96,6 +97,7 @@ class ClaimExtractor:
                  config: NormalizerConfig | None = None) -> None:
         self.llm, self.model, self.cache, self.config = llm, model, cache, config
         self.dropped = 0  # claims rejected (hallucinated quote / invalid)
+        self._lock = threading.Lock()
 
     def _raw_claims(self, doc: Document) -> list[dict[str, Any]]:
         key = cache_key(self.model, PROMPT_VERSION, doc.doc_date.isoformat() if doc.doc_date else "", doc.text)
@@ -122,7 +124,8 @@ class ClaimExtractor:
         for c in self._raw_claims(doc):
             quote = str(c.get("quote") or "").strip()
             if not all(c.get(k) for k in ("subject", "predicate", "object")) or _squash(quote) not in haystack or not quote:
-                self.dropped += 1
+                with self._lock:
+                    self.dropped += 1
                 continue
             start = resolve(c.get("valid_from"), doc.doc_date, config=self.config)
             end = resolve(c.get("valid_to"), doc.doc_date, config=self.config)

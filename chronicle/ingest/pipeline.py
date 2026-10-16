@@ -3,6 +3,7 @@
 import json
 import sys
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,7 +46,7 @@ def read_claims(path: Path) -> list[Claim]:
 
 
 def run_ingest(documents: Iterable[Document], state: Path, llm: LLM, *, model: str = "nemotron",
-               cache_dir: Path | None = None) -> IngestStats:
+               cache_dir: Path | None = None, workers: int = 6) -> IngestStats:
     """Extract claims for each not-yet-ingested document and append them to ``state/claims.jsonl``.
 
     Idempotent: re-running skips finished doc_ids; the LLM cache makes even forced re-runs free.
@@ -60,24 +61,34 @@ def run_ingest(documents: Iterable[Document], state: Path, llm: LLM, *, model: s
     for c in read_claims(claims_path):  # keep canonical names consistent across part_a -> part_b
         resolver.resolve(c.subject)
     stats = IngestStats()
-    with claims_path.open("a", encoding="utf-8") as out:
-        for doc in documents:
-            if doc.doc_id in done:
-                stats.skipped += 1
-                continue
-            try:
-                claims = [resolver.resolve_claim(c) for c in extractor.extract(doc)]
-            except Exception as exc:  # noqa: BLE001
+    pending = []
+    for doc in documents:
+        if doc.doc_id in done:
+            stats.skipped += 1
+        else:
+            pending.append(doc)
+
+    def extract(doc: Document):
+        try:
+            return extractor.extract(doc), None
+        except Exception as exc:  # noqa: BLE001
+            return None, exc
+
+    # Extraction (network-bound) runs in parallel; results are consumed in document order so
+    # entity resolution and claims.jsonl stay deterministic.
+    with claims_path.open("a", encoding="utf-8") as out, ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        for doc, (extracted, exc) in zip(pending, pool.map(extract, pending), strict=True):
+            if exc is not None:
                 stats.failed += 1
                 print(f"[chronicle] FAILED {doc.doc_id}: {exc}", file=sys.stderr)
                 continue
-            for c in claims:
+            for c in (resolver.resolve_claim(c) for c in extracted):
                 out.write(c.model_dump_json() + "\n")
             out.flush()
             done.add(doc.doc_id)
             done_path.write_text(json.dumps(sorted(done)))
             stats.documents += 1
-            stats.claims += len(claims)
+            stats.claims += len(extracted)
     stats.dropped, stats.cache_hits, stats.cache_misses = extractor.dropped, cache.hits, cache.misses
     return stats
 

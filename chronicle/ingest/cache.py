@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ class DiskCache:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.hits = 0
         self.misses = 0
+        self._lock = threading.Lock()
 
     def _path(self, key: str) -> Path:
         return self.directory / key[:2] / f"{key}.json"
@@ -44,9 +46,11 @@ class DiskCache:
             except json.JSONDecodeError:
                 value = None  # corrupt entry: treat as a miss
             if value is not None:
-                self.hits += 1
+                with self._lock:
+                    self.hits += 1
                 return value
-        self.misses += 1
+        with self._lock:
+            self.misses += 1
         return None
 
     def put(self, key: str, value: Any) -> None:
