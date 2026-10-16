@@ -10,7 +10,7 @@ from chronicle.schema import Claim, Document, Entity, Event
 from .cache import DiskCache, cache_key
 from .temporal_normalizer import NormalizerConfig, resolve
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 PREDICATES = [
     "owns", "works_on", "works_at", "reports_to", "status", "deadline", "scheduled_for",

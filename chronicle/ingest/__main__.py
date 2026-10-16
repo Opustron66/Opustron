@@ -23,6 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     llm = OpenAICompatLLM(model=args.model, timeout=args.timeout)
     stats = ingest_corpus(args.corpus, args.state, llm, model=llm.model, workers=args.workers)
     print(f"[chronicle] part={args.part} {stats}", file=sys.stderr)
+    print(f"[chronicle] llm calls={llm.calls} prompt_tokens={llm.prompt_tokens} completion_tokens={llm.completion_tokens}", file=sys.stderr)
     return 1 if stats.failed and not stats.documents else 0
 
 
