@@ -1,20 +1,26 @@
 import importlib.util
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from chronicle.integrations.hermes_provider import ChronicleMemoryProvider, InMemoryBackend
+from chronicle.guard.egress_logger import EgressLogger
+from chronicle.integrations import tavily
+from chronicle.integrations.hermes_provider import (
+    ChronicleMemoryProvider,
+    InMemoryBackend,
+)
+from chronicle.integrations.tavily import TavilyClient
 
 
 def _day(d: str) -> datetime:
-    return datetime.fromisoformat(d).replace(tzinfo=timezone.utc)
+    return datetime.fromisoformat(d).replace(tzinfo=UTC)
 
 
 @pytest.fixture
 def provider():
-    p = ChronicleMemoryProvider()
+    p = ChronicleMemoryProvider(web=TavilyClient(api_key=""))
     p.initialize("s1", hermes_home="/tmp/hermes-test")
     return p
 
@@ -122,3 +128,41 @@ def test_plugin_dir_registers_provider_like_hermes_loads_it():
 
     module.register(Ctx())
     assert isinstance(registered[0], ChronicleMemoryProvider)
+
+
+@pytest.fixture
+def web_provider(tmp_path, monkeypatch):
+    monkeypatch.setattr(tavily, "get_logger", lambda: EgressLogger(tmp_path / "egress.log"))
+    sent = []
+
+    def transport(url, headers, body, timeout):
+        sent.append(json.loads(body))
+        return json.dumps({"results": [{"title": "Nebius", "url": "https://nebius.com", "content": "AI cloud", "score": 0.8}]}).encode()
+
+    p = ChronicleMemoryProvider(web=TavilyClient("tvly-test", transport=transport))
+    p.initialize("s1")
+    p.sent = sent
+    return p
+
+
+def test_web_tool_only_offered_when_tavily_configured(provider, web_provider):
+    assert "chronicle_web_search" not in {t["name"] for t in provider.get_tool_schemas()}
+    assert "chronicle_web_search" in {t["name"] for t in web_provider.get_tool_schemas()}
+
+
+def test_web_search_tool_returns_results(web_provider):
+    out = json.loads(web_provider.handle_tool_call("chronicle_web_search", {"query": "Nebius AI cloud", "max_results": 2}))
+    assert out["results"][0]["url"] == "https://nebius.com"
+    assert web_provider.sent == [{"query": "Nebius AI cloud", "max_results": 2}]
+
+
+def test_web_search_tool_refuses_personal_data(web_provider):
+    out = json.loads(web_provider.handle_tool_call("chronicle_web_search", {"query": "alice@example.com"}))
+    assert out["blocked"] is True
+    assert "EMAIL_ADDRESS" in out["pii_types"]
+    assert web_provider.sent == []
+
+
+def test_web_search_without_key_reports_error(provider):
+    out = json.loads(provider.handle_tool_call("chronicle_web_search", {"query": "Nebius"}))
+    assert "TAVILY_API_KEY" in out["error"]
