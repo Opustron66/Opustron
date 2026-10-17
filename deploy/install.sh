@@ -77,6 +77,10 @@ else
   fi
 fi
 "$PY" -c 'import chronicle.integrations.hermes_provider' || die "Chronicle failed to import in $PY"
+say "Checking name detection (loads spaCy, takes ~15s)"
+"$PY" -c 'import sys; from chronicle.guard.pii_detector import ner_available; sys.exit(0 if ner_available() else 1)' 2>/dev/null \
+  || die "Name detection failed to load, so names would reach the model unmasked. The spaCy model
+       downloads from github.com: inside a NemoClaw sandbox, add the 'github' preset while installing."
 
 # --- 2. Local state (egress log, LLM cache) stays private to this user ---------
 mkdir -p "$CHRONICLE_HOME"

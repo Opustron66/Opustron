@@ -97,10 +97,11 @@ def pseudonymize(
     if not entities:
         return text, mapping
 
-    # Replace spans right-to-left to preserve offsets
+    # Number tokens in reading order, then replace right-to-left to preserve offsets.
+    ordered = sorted(entities, key=lambda m: m.start)
+    tokens = [mapping.token_for(m.entity_type, m.value) for m in ordered]
     result = list(text)
-    for match in sorted(entities, key=lambda m: m.start, reverse=True):
-        token = mapping.token_for(match.entity_type, match.value)
+    for match, token in reversed(list(zip(ordered, tokens))):
         result[match.start : match.end] = list(token)
 
     return "".join(result), mapping

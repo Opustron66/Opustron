@@ -151,9 +151,9 @@ def test_web_tool_only_offered_when_tavily_configured(provider, web_provider):
 
 
 def test_web_search_tool_returns_results(web_provider):
-    out = json.loads(web_provider.handle_tool_call("chronicle_web_search", {"query": "Nebius AI cloud", "max_results": 2}))
+    out = json.loads(web_provider.handle_tool_call("chronicle_web_search", {"query": "Nebius Token Factory pricing", "max_results": 2}))
     assert out["results"][0]["url"] == "https://nebius.com"
-    assert web_provider.sent == [{"query": "Nebius AI cloud", "max_results": 2}]
+    assert web_provider.sent == [{"query": "Nebius Token Factory pricing", "max_results": 2}]
 
 
 def test_web_search_tool_refuses_personal_data(web_provider):
