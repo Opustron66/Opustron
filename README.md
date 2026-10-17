@@ -52,6 +52,12 @@ set -a; source .env; set +a
 Every teammate calls models through one client. Never import `openai`
 directly.
 
+CI enforces this: `tests/guard/test_egress_boundary.py` fails if code outside
+`chronicle/guard/` imports `openai`, `requests`, `httpx`, `aiohttp`,
+`urllib.request` or `http.client`, or hard-codes the Token Factory / Tavily URLs.
+The only exception is the Tavily client, which has its own PII gate. The sandbox
+policy can't catch this, because it sees one Python process.
+
 ```python
 from chronicle.guard import llm
 
