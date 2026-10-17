@@ -75,6 +75,20 @@ uv sync --extra dev --extra privacy
 uv run python -m spacy download en_core_web_sm
 ```
 
+## Web enrichment (Tavily)
+
+```python
+from chronicle.integrations.tavily import TavilyClient, PrivacyBlocked
+
+results = TavilyClient().search("Nebius Token Factory pricing", max_results=5)
+```
+
+Needs `TAVILY_API_KEY`. A search query can't be pseudonymised (nobody can search
+for `PERSON_1`), so a query that identifies a person is refused instead:
+emails, phone numbers, IDs, and names when the NER extra is installed raise
+`PrivacyBlocked` and nothing is sent. Organisations, places and links are
+allowed. Every query that is sent goes to the egress log as provider `tavily`.
+
 ## Memory Time Machine UI
 
 ```bash
@@ -115,7 +129,8 @@ the policy blocked, run `openshell logs <sandbox> --source sandbox`.
 | `deploy/hermes-plugin/chronicle/` | Hermes plugin; see its README for hooks and tools |
 
 In Hermes, the agent gets `chronicle_recall` (with `as_of: YYYY-MM-DD` to ask
-about a past date) and `chronicle_remember`. The plugin currently stores memory
+about a past date) and `chronicle_remember`, plus `chronicle_web_search` when
+`TAVILY_API_KEY` is set. The plugin currently stores memory
 in-process until the SQLite store lands, so memory does not survive a Hermes
 restart yet.
 
