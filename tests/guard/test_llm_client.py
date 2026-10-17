@@ -137,3 +137,42 @@ def test_model_and_timeout_settings(monkeypatch):
     monkeypatch.setenv("NEBIUS_API_KEY", "nebius-key")
     LLMClient(use_cache=False, timeout=12).complete([{"role": "user", "content": "a"}])
     assert seen["timeout"] == 12 and seen["api_key"] == "nebius-key"
+
+
+ANSWER = {"answer": "Bob", "source_ids": ["email_042"]}
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        json.dumps(ANSWER),
+        f"```json\n{json.dumps(ANSWER)}\n```",
+        f"<think>Owner changed on 15 May, so {{\"answer\": \"Alice\"}} is stale.</think>\n{json.dumps(ANSWER)}",
+        f"Let me check {{the dates}} first...\n</think>\n\n{json.dumps(ANSWER)}",
+        f"<think>hmm</think>```json\n{json.dumps(ANSWER)}\n```",
+        f"Draft: {{\"answer\": \"Alice\", \"source_ids\": []}}\nFinal: {json.dumps(ANSWER)}",
+    ],
+    ids=["plain", "fenced", "think-with-braces", "stray-close-tag", "think-then-fence", "last-wins"],
+)
+def test_parse_json_reply_tolerates_reasoning_noise(raw):
+    assert llm_client.parse_json_reply(raw) == ANSWER
+
+
+def test_parse_json_reply_returns_outer_object_not_nested():
+    raw = '<think>x</think>{"answer": "Bob", "meta": {"confidence": 0.9}}'
+    assert llm_client.parse_json_reply(raw) == {"answer": "Bob", "meta": {"confidence": 0.9}}
+
+
+@pytest.mark.parametrize("raw", ["", "<think>still thinking", "Not in the corpus.", "{broken"])
+def test_parse_json_reply_raises_when_no_json(raw):
+    with pytest.raises(ValueError):
+        llm_client.parse_json_reply(raw)
+
+
+def test_bare_schema_call_survives_think_block():
+    t = Recorder('<think>EMAIL_1 sent the handover on 15 May.</think>{"answer": "EMAIL_1", "source_ids": ["email_042"]}')
+    out = LLMClient(transport=t, use_cache=False).complete(
+        [{"role": "user", "content": "Who sent the handover? It came from dana@corp.io."}], schema=BARE
+    )
+    assert "dana@corp.io" not in json.dumps(t.calls[0]["messages"])
+    assert out == {"answer": "dana@corp.io", "source_ids": ["email_042"]}  # restored, then parsed
