@@ -12,3 +12,4 @@ ui/dist/
 data/*/
 !data/README.md
 .cache/
+.coverage
