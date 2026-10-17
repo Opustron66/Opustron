@@ -41,7 +41,7 @@ Chronicle's own LLM calls always go through `chronicle.guard.llm`, which
 pseudonymises everything and writes `~/.chronicle/egress.log`.
 
 Web searches are refused, and nothing is sent, when the query contains an
-email, phone number, ID or (with the NER extra) a person's name. The agent gets
+email, phone number, ID or a person's name. The agent gets
 `{"blocked": true, "pii_types": [...]}` back. Sent queries are logged too.
 
 ## Current limitation

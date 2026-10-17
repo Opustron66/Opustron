@@ -1,13 +1,18 @@
-"""PII detection: regex patterns + optional Presidio NER.
+"""PII detection: regex patterns + Presidio NER.
 
-Tier 1 (always available): comprehensive regex patterns.
-Tier 2 (when presidio + spacy are installed): full NER for PERSON / ORG / LOCATION.
+Tier 1 (always available): regex for emails, phones, SSNs, cards, IPs, URLs.
+Tier 2 (Presidio + spaCy en_core_web_sm, installed by default): names,
+organisations and places. If it can't load, a warning is logged once and only
+Tier 1 runs; ``ner_available()`` reports which.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Regex patterns (Tier 1)
@@ -54,11 +59,12 @@ def _regex_detect(text: str) -> list[PiiMatch]:
 # ---------------------------------------------------------------------------
 
 _presidio_analyzer = None
+_presidio_load_failed = False
 
 
 def _get_presidio_analyzer():
-    global _presidio_analyzer
-    if _presidio_analyzer is not None:
+    global _presidio_analyzer, _presidio_load_failed
+    if _presidio_analyzer is not None or _presidio_load_failed:
         return _presidio_analyzer
     try:
         from presidio_analyzer import AnalyzerEngine
@@ -71,17 +77,28 @@ def _get_presidio_analyzer():
         provider = NlpEngineProvider(nlp_configuration=configuration)
         nlp_engine = provider.create_engine()
         _presidio_analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
-    except Exception:
-        _presidio_analyzer = None
+    except Exception as exc:
+        _presidio_load_failed = True
+        logger.warning(
+            "Name detection is OFF (Presidio/spaCy unavailable: %s). Only emails, phones, IDs "
+            "and URLs will be pseudonymised. Run `uv sync` to install it.",
+            exc,
+        )
     return _presidio_analyzer
 
 
+def ner_available() -> bool:
+    """True when names, organisations and places are being detected."""
+    return _get_presidio_analyzer() is not None
+
+
+# DATE_TIME is deliberately absent: dates are what Chronicle reasons about
+# ("who owned payments on 3 May?"), and a model shown DATE_1 can't order facts.
 _PRESIDIO_ENTITY_TYPES = {
     "PERSON",
     "ORGANIZATION",
     "LOCATION",
     "NRP",
-    "DATE_TIME",
     "MEDICAL_LICENSE",
     "URL",
     "US_DRIVER_LICENSE",

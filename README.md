@@ -83,20 +83,25 @@ What it does for you:
   a redacted preview) to `~/.chronicle/egress.log`. The UI shows this log.
 
 Ingestion uses this client too, so corpus text is pseudonymised before it
-reaches Nebius and quotes come back with the real values restored (names are
-only caught with the NER extra below):
+reaches Nebius and quotes come back with the real values restored:
 
 ```bash
 python -m chronicle.ingest --corpus DIR --state DIR [--model ID] [--timeout 180] [--max-tokens 8192]
 ```
 
-Basic detection is regex-only (emails, phones, SSNs, cards, IPs, URLs). For
-names, organisations and places install the NER extra:
+What gets detected:
 
-```bash
-uv sync --extra dev --extra privacy
-uv run python -m spacy download en_core_web_sm
-```
+| Masked | How |
+|---|---|
+| Emails, phones, SSNs, cards, IPs, URLs | Regex, always on |
+| People, organisations, places | Presidio + spaCy `en_core_web_sm`, installed by `uv sync` |
+| **Not masked: dates and times** | Deliberately. Chronicle reasons about when facts were true; a model shown `DATE_1` can't order them |
+
+The first call takes ~15s while spaCy loads. If the model can't load, a warning
+says `Name detection is OFF` and only the regex tier runs. Check with
+`uv run python -c "from chronicle.guard.pii_detector import ner_available; print(ner_available())"`.
+The small model misses some lone first names ("Priya") and sometimes flags
+non-names ("Nebius AI" as a person).
 
 ## Web enrichment (Tavily)
 
@@ -108,8 +113,8 @@ results = TavilyClient().search("Nebius Token Factory pricing", max_results=5)
 
 Needs `TAVILY_API_KEY`. A search query can't be pseudonymised (nobody can search
 for `PERSON_1`), so a query that identifies a person is refused instead:
-emails, phone numbers, IDs, and names when the NER extra is installed raise
-`PrivacyBlocked` and nothing is sent. Organisations, places and links are
+emails, phone numbers, IDs and people's names raise `PrivacyBlocked` and
+nothing is sent. Organisations, places and links are
 allowed. Every query that is sent goes to the egress log as provider `tavily`.
 
 ## Memory Time Machine UI
@@ -142,7 +147,10 @@ hermes memory setup                  # choose "chronicle"
 ./deploy/install.sh --sandbox <sandbox> --lockdown
 ```
 
-Install before `--lockdown`: the lockdown policy blocks PyPI. To see anything
+Install before `--lockdown`: the lockdown policy blocks PyPI. The install also
+downloads spaCy's English model from github.com, so inside a NemoClaw sandbox
+add the `github` preset while installing (`install.sh` stops with a clear error
+if name detection can't load). To see anything
 the policy blocked, run `openshell logs <sandbox> --source sandbox`.
 
 | File | Purpose |
