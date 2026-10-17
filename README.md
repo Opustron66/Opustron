@@ -221,8 +221,20 @@ npm run dev      # http://localhost:5173
 npm test         # Vitest + Testing Library
 ```
 
-The UI proxies `/api` to `http://localhost:8000` (the memory backend, not
-built yet), so entities, the timeline and chat show sample data for now.
+**Real data.** The UI proxies `/api` to the memory server on port 8000. In
+another terminal, serve an ingested state dir:
+
+```bash
+uv run python -m chronicle.memory serve --state DIR   # DIR holds P1's claims.jsonl
+```
+
+The header then shows `● Live memory · N facts`, entity cards and the timeline
+use the store's facts, and the slider starts on the latest date. Cards show an
+entity on either side of a fact ("Alice Chen: owns → payments service", and
+"payments service: who owns → Alice Chen"). As in the store, `valid_to` is the
+first day a fact is no longer true, so on a handover day only the new owner is
+current. Without the server the UI shows labelled sample data. Chat (`/api/ask`)
+is still a placeholder reply.
 
 **Live egress log.** In a second terminal, run:
 
@@ -268,9 +280,11 @@ the policy blocked, run `openshell logs <sandbox> --source sandbox`.
 
 In Hermes, the agent gets `chronicle_recall` (with `as_of: YYYY-MM-DD` to ask
 about a past date) and `chronicle_remember`, plus `chronicle_web_search` when
-`TAVILY_API_KEY` is set. The plugin currently stores memory
-in-process until the SQLite store lands, so memory does not survive a Hermes
-restart yet.
+`TAVILY_API_KEY` is set. Memory is stored in the SQLite store at
+`$HERMES_HOME/chronicle/memory.sqlite3`, one per Hermes profile, so it survives
+restarts. Set `CHRONICLE_MEMORY_DB` to a path to share one database instead, for
+example the UI's `DIR/memory.sqlite3`, so Hermes memories and ingested
+documents are recalled together.
 
 ## Tests
 
