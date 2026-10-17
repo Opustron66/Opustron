@@ -184,9 +184,21 @@ npm run dev      # http://localhost:5173
 npm test         # Vitest + Testing Library
 ```
 
-The UI proxies `/api` to `http://localhost:8000`. Until the backend is
-running it shows mock data, and the console shows 500s from `/api/egress`
-polling. That is expected.
+The UI proxies `/api` to `http://localhost:8000` (the memory backend, not
+built yet), so entities, the timeline and chat show sample data for now.
+
+**Live egress log.** In a second terminal, run:
+
+```bash
+uv run python -m chronicle.guard.egress_server     # http://127.0.0.1:8001/api/egress
+```
+
+The bottom panel then shows `● LIVE` and every model call and web search as it
+leaves the machine, refreshed every 2s, with redaction badges and PII types.
+Without the server it shows `sample data` (made-up entries), and if the server
+stops after being live it shows `offline` with the last real entries. The
+server only listens on 127.0.0.1 and only serves `GET /api/egress?n=30`.
+Polls while it's down show up as 500s in the browser console; that is expected.
 
 ## Running in a sandbox with Hermes Agent
 
