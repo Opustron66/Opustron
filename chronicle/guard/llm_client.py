@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -37,6 +38,40 @@ DEFAULT_MAX_TOKENS = 1024  # reasoning models (Nemotron) need ~8192: set max_tok
 
 # HTTP statuses an OpenAI-compatible endpoint returns when it rejects response_format
 _SCHEMA_REJECTED_STATUSES = (400, 422)
+
+
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
+_FENCE = re.compile(r"```(?:json)?")
+_JSON_START = re.compile(r"[{\[]")
+
+
+def parse_json_reply(text: str) -> Any:
+    """Parse a model reply that should be JSON, tolerating reasoning-model noise.
+
+    Strips <think> blocks (and anything before a stray closing </think>) and
+    code fences, then returns the LAST complete top-level JSON value, since a
+    reasoning model's answer follows its thinking. Raises ValueError if none.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    cleaned = _THINK_BLOCK.sub("", text)
+    if "</think>" in cleaned:
+        cleaned = cleaned.rsplit("</think>", 1)[1]
+    cleaned = _FENCE.sub("", cleaned)
+
+    decoder, found, pos = json.JSONDecoder(), None, 0
+    while (match := _JSON_START.search(cleaned, pos)) is not None:
+        try:
+            value, end = decoder.raw_decode(cleaned, match.start())
+        except json.JSONDecodeError:
+            pos = match.start() + 1
+            continue
+        found, pos = value, end  # skip past it, so nested objects never win
+    if found is None:
+        raise ValueError(f"model reply contained no JSON: {text[:120]!r}")
+    return found
 
 
 def _is_wrapped(schema: dict[str, Any]) -> bool:
@@ -107,7 +142,10 @@ class LLMClient:
         - no schema: returns the reply text.
         - bare schema: returns the parsed JSON object.
         - envelope: returns the reply text, for callers that parse it
-          themselves (e.g. to strip a reasoning model's <think> block).
+          themselves.
+
+        Bare-schema replies go through ``parse_json_reply``, so <think> blocks
+        and code fences around the JSON are tolerated.
 
         If the endpoint rejects ``response_format``, the call is retried
         without it and later calls on this client skip it.
@@ -152,12 +190,7 @@ class LLMClient:
         )
 
         if schema is not None and not _is_wrapped(schema):
-            try:
-                return json.loads(restored_raw)
-            except json.JSONDecodeError:
-                # Best-effort: strip markdown fences and retry
-                stripped = restored_raw.strip().removeprefix("```json").removesuffix("```").strip()
-                return json.loads(stripped)
+            return parse_json_reply(restored_raw)
 
         return restored_raw
 

@@ -66,9 +66,13 @@ data = llm.complete(messages, schema={"type": "object", "properties": {...}})  #
 raw = llm.complete(messages, schema={"name": "claims", "schema": {...}})      # returns the reply text
 ```
 
-Pass a bare JSON Schema to get a parsed dict back. Pass an OpenAI
-`json_schema` envelope (`{"name": ..., "schema": ...}`) to get the raw reply
-text and parse it yourself, e.g. to strip a reasoning model's `<think>` block.
+Pass a bare JSON Schema to get a parsed dict back. The parser tolerates
+reasoning-model noise (`<think>` blocks, code fences, a draft before the final
+answer) and takes the last complete JSON value; it raises `ValueError` if the
+reply has none. The same parser is available as
+`chronicle.guard.llm_client.parse_json_reply`. Pass an OpenAI `json_schema`
+envelope (`{"name": ..., "schema": ...}`) to get the raw reply text and parse
+it yourself.
 If the endpoint rejects `response_format`, the client retries without it and
 stops sending it. For your own settings, build a client:
 `LLMClient(default_model=..., max_tokens=8192, timeout=180)`.
