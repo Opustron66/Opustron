@@ -1,8 +1,8 @@
 {
   "name": "chronicle",
-  "description": "Chronicle P3 baseline: raw-document retrieval and model-based answers. Replace with temporal store for full system.",
+  "description": "Chronicle P3 baseline: shared P1 claim ingestion, claim retrieval and privacy-routed answers. P2 temporal-store integration pending.",
   "model": "SET_TO_ACTUAL_MODEL_ID",
   "accounting": "proxy",
-  "ingest": ["python", "adapters/chronicle/ingest.py", "--corpus", "{corpus}", "--state", "{state}"],
+  "ingest": ["python", "-m", "chronicle.ingest", "--corpus", "{corpus}", "--state", "{state}"],
   "answer": ["python", "adapters/chronicle/answer.py", "--state", "{state}"]
 }

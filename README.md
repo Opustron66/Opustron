@@ -112,6 +112,60 @@ emails, phone numbers, IDs, and names when the NER extra is installed raise
 `PrivacyBlocked` and nothing is sent. Organisations, places and links are
 allowed. Every query that is sent goes to the egress log as provider `tavily`.
 
+## P3: benchmark adapter and ingestion handoff
+
+The benchmark adapter now runs P1's `python -m chronicle.ingest`. It uses the
+same extraction, entity resolution, incremental ingestion and `Claim` schema
+as normal ingestion. P3 retrieves evidence from P1's `state/claims.jsonl`,
+retaining source document IDs, verbatim quotes, observation dates and validity
+fields. There is no separate raw-document SQLite ingestion path.
+
+```powershell
+uv run python -m chronicle.ingest --corpus tests/fixtures/corpus/part_a --state .tmp/chronicle
+uv run python -m chronicle.ingest --corpus tests/fixtures/corpus/part_b --state .tmp/chronicle
+'{"id":"q1","question":"Who owns payments?"}' | uv run python adapters/chronicle/answer.py --state .tmp/chronicle
+uv run pytest tests/reason tests/ingest tests/guard
+```
+
+Set `NEBIUS_API_KEY` and `CHRONICLE_MODEL` before starting either process.
+Extraction and answering both use the shared privacy guard. For reasoning
+models, set `CHRONICLE_MAX_TOKENS` to a sufficient answer budget (for example,
+8192); P1's CLI defaults to 8192 for extraction. The legacy adapter ingest
+script forwards to P1's CLI for existing callers, including its exit status.
+Existing `chronicle_adapter.sqlite3` state must be re-ingested into a fresh
+state directory. It is never used as a fallback. Malformed question records
+are skipped with a line-number diagnostic on stderr; stdout stays JSONL.
+
+### Proposed P1/P2/P3 handoff (agreement pending)
+
+P1 ingestion is shared now. P2 currently exposes only an in-memory event store,
+so this baseline reads P1's persisted claims directly. The proposed next
+handoff is before a full-system benchmark run, once P2 provides persistent
+claim ingestion and search that preserve `Claim` provenance, validity and
+observation dates across separate ingest/answer processes. Sara/P1 and P2
+still need to confirm the interface and timing; no agreement is claimed here.
+
+- P1 owns extraction and the shared `Claim` contract.
+- P2 owns durable claim storage, supersession and temporal search.
+- P3 will switch retrieval to P2's API when it lands, with tests for A/B
+  ingestion, restart persistence, citations and as-of queries. Ingestion will
+  continue to use P1's entry point.
+
+Current retrieval ranks claims by keyword overlap. It does not resolve
+supersession or guarantee correct as-of answers; temporal integration,
+live-provider behavior, official benchmark scores and final ablations are not
+verified by the unit tests. Do not compare legacy raw-document runs with
+claim-based runs as if they used identical ingestion.
+
+Update `adapters/chronicle/adapter.json`'s `model` to the actual model for an
+official run. Launch NVIDIA's `python -m bench.runner --adapter
+adapters/chronicle` from its benchmark root with Chronicle importable. If the
+runner supplies an accounting proxy, configure the guard's `NEBIUS_BASE_URL`
+to that proxy and verify accounting before reporting results. The adapter no
+longer reads `OPENAI_BASE_URL`, `OPENAI_API_KEY` or `MNEMO_MODEL`. A proxy run
+without model traffic is not an official result. Keep state and gold answers
+out of Git, and do not tune on gold answers.
+
 ## Memory Time Machine UI
 
 ```bash

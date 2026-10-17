@@ -9,12 +9,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from chronicle.reason.pipeline import answer_question
 
 def run(state: Path, instream=sys.stdin, outstream=sys.stdout):
-    for line in instream:
+    for line_number, line in enumerate(instream, start=1):
         if not line.strip():
             continue
-        question = json.loads(line)
-        if not isinstance(question.get("id"), str) or not isinstance(question.get("question"), str):
-            raise ValueError("Each question must contain string 'id' and 'question'")
+        try:
+            question = json.loads(line)
+        except json.JSONDecodeError:
+            print(f"[chronicle] skipping line {line_number}: invalid JSON", file=sys.stderr)
+            continue
+        if (not isinstance(question, dict)
+                or not isinstance(question.get("id"), str)
+                or not isinstance(question.get("question"), str)):
+            print(
+                f"[chronicle] skipping line {line_number}: expected an object with string 'id' and 'question'",
+                file=sys.stderr,
+            )
+            continue
         result = answer_question(question["question"], state)
         print(json.dumps({"id": question["id"], "answer": result.answer, "source_ids": result.source_ids}), file=outstream, flush=True)
 
