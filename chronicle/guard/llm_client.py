@@ -10,8 +10,11 @@ Usage:
         messages=[{"role": "user", "content": "Who owned payments on 3 May?"}],
     )
 
-    # Structured JSON output:
+    # Structured JSON output, parsed for you:
     data = llm.complete(messages=..., schema={"type": "object", ...})
+
+    # Structured output, raw reply text (you parse it yourself):
+    text = llm.complete(messages=..., schema={"name": "claims", "schema": {...}})
 """
 
 from __future__ import annotations
@@ -19,6 +22,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +33,15 @@ _CACHE_DIR = Path.home() / ".chronicle" / "llm_cache"
 DEV_MODEL = "nvidia/nemotron-mini-4b-instruct"   # cheap, fast
 PROD_MODEL = "nvidia/nemotron-4-340b-instruct"    # official benchmark runs
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
+DEFAULT_MAX_TOKENS = 1024  # reasoning models (Nemotron) need ~8192: set max_tokens or CHRONICLE_MAX_TOKENS
+
+# HTTP statuses an OpenAI-compatible endpoint returns when it rejects response_format
+_SCHEMA_REJECTED_STATUSES = (400, 422)
+
+
+def _is_wrapped(schema: dict[str, Any]) -> bool:
+    """True for an OpenAI ``json_schema`` envelope ({"name": ..., "schema": {...}})."""
+    return "type" not in schema and "name" in schema and isinstance(schema.get("schema"), dict)
 
 
 class LLMClient:
@@ -41,7 +55,15 @@ class LLMClient:
         default_model: str | None = None,
         use_cache: bool = True,
         privacy_router: Any | None = None,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+        transport: Callable[..., Any] | None = None,
     ) -> None:
+        """
+        transport: optional replacement for ``OpenAI().chat.completions.create``
+        (takes its keyword arguments, returns an object with ``.choices`` and
+        ``.usage``). Tests use it to run without the network.
+        """
         self._api_key = api_key or os.environ.get("NEBIUS_API_KEY", "")
         self._base_url = base_url or os.environ.get("NEBIUS_BASE_URL", DEFAULT_BASE_URL)
         self._default_model = default_model or os.environ.get(
@@ -49,9 +71,21 @@ class LLMClient:
         )
         self._use_cache = use_cache
         self._router = privacy_router  # set after construction to avoid circular import
+        self.max_tokens = max_tokens or int(
+            os.environ.get("CHRONICLE_MAX_TOKENS", DEFAULT_MAX_TOKENS)
+        )
+        self._timeout = timeout
+        self._transport = transport
+        self._transport_lock = threading.Lock()
+        self._structured = True  # flips to False once the endpoint rejects json_schema
 
         if use_cache:
             _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def model(self) -> str:
+        """The model used when ``complete`` is called without ``model``."""
+        return self._default_model
 
     # ------------------------------------------------------------------
     # Public interface (P1–P4 all call this)
@@ -63,12 +97,20 @@ class LLMClient:
         schema: dict[str, Any] | None = None,
         model: str | None = None,
         temperature: float = 0.0,
-        max_tokens: int = 1024,
+        max_tokens: int | None = None,
     ) -> str | dict[str, Any]:
         """Call the LLM, routing PII through the privacy router.
 
-        Returns a string unless `schema` is provided, in which case it
-        returns the parsed JSON object.
+        `schema` may be a bare JSON Schema or an OpenAI ``json_schema``
+        envelope ({"name": ..., "schema": {...}}):
+
+        - no schema: returns the reply text.
+        - bare schema: returns the parsed JSON object.
+        - envelope: returns the reply text, for callers that parse it
+          themselves (e.g. to strip a reasoning model's <think> block).
+
+        If the endpoint rejects ``response_format``, the call is retried
+        without it and later calls on this client skip it.
         """
         from .egress_logger import get_logger
         from .privacy_router import PrivacyRouter
@@ -87,12 +129,12 @@ class LLMClient:
                 prompt_tokens = completion_tokens = 0
             else:
                 raw, prompt_tokens, completion_tokens = self._call_api(
-                    redacted_messages, schema, model, temperature, max_tokens
+                    redacted_messages, schema, model, temperature, max_tokens or self.max_tokens
                 )
                 self._save_cache(cache_key, raw)
         else:
             raw, prompt_tokens, completion_tokens = self._call_api(
-                redacted_messages, schema, model, temperature, max_tokens
+                redacted_messages, schema, model, temperature, max_tokens or self.max_tokens
             )
 
         # Re-identify pseudonyms in the response
@@ -109,7 +151,7 @@ class LLMClient:
             request_preview=redacted_messages[-1]["content"][:200] if redacted_messages else "",
         )
 
-        if schema is not None:
+        if schema is not None and not _is_wrapped(schema):
             try:
                 return json.loads(restored_raw)
             except json.JSONDecodeError:
@@ -132,14 +174,7 @@ class LLMClient:
         max_tokens: int,
     ) -> tuple[str, int, int]:
         """Make the actual API call. Returns (content, prompt_tokens, completion_tokens)."""
-        try:
-            from openai import OpenAI
-        except ImportError as exc:
-            raise RuntimeError(
-                "openai package is required: uv add openai"
-            ) from exc
-
-        client = OpenAI(api_key=self._api_key, base_url=self._base_url)
+        create = self._get_transport()
 
         kwargs: dict[str, Any] = {
             "model": model or self._default_model,
@@ -147,18 +182,40 @@ class LLMClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        if schema is not None:
-            kwargs["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {"name": "response", "schema": schema},
-            }
+        if schema is not None and self._structured:
+            envelope = schema if _is_wrapped(schema) else {"name": "response", "schema": schema}
+            kwargs["response_format"] = {"type": "json_schema", "json_schema": envelope}
 
-        resp = client.chat.completions.create(**kwargs)
+        try:
+            resp = create(**kwargs)
+        except Exception as exc:
+            if "response_format" not in kwargs or not _rejects_schema(exc):
+                raise
+            kwargs.pop("response_format")
+            resp = create(**kwargs)
+            self._structured = False
+
         content = resp.choices[0].message.content or ""
         usage = resp.usage
         prompt_tokens = usage.prompt_tokens if usage else 0
         completion_tokens = usage.completion_tokens if usage else 0
         return content, prompt_tokens, completion_tokens
+
+    def _get_transport(self) -> Callable[..., Any]:
+        with self._transport_lock:
+            if self._transport is None:
+                try:
+                    from openai import OpenAI
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "openai package is required: uv add openai"
+                    ) from exc
+                kwargs: dict[str, Any] = {"api_key": self._api_key, "base_url": self._base_url,
+                                          "max_retries": 2}
+                if self._timeout is not None:
+                    kwargs["timeout"] = self._timeout
+                self._transport = OpenAI(**kwargs).chat.completions.create
+            return self._transport
 
     def _cache_key(
         self,
@@ -176,6 +233,11 @@ class LLMClient:
     def _save_cache(self, key: str, content: str) -> None:
         path = _CACHE_DIR / f"{key}.txt"
         path.write_text(content, encoding="utf-8")
+
+
+def _rejects_schema(exc: Exception) -> bool:
+    """Did the endpoint refuse the request (most likely its response_format)?"""
+    return getattr(exc, "status_code", None) in _SCHEMA_REJECTED_STATUSES
 
 
 # ---------------------------------------------------------------------------

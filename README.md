@@ -43,6 +43,7 @@ set -a; source .env; set +a
 | `NEBIUS_API_KEY` | Nebius Token Factory (all model calls) |
 | `NEBIUS_BASE_URL` | Defaults to `https://api.tokenfactory.nebius.com/v1/` |
 | `CHRONICLE_MODEL` | Defaults to the cheap dev model; use the large model only for official benchmark runs |
+| `CHRONICLE_MAX_TOKENS` | Default completion budget for `chronicle.guard.llm` (1024). Reasoning models need ~8192 |
 | `TAVILY_API_KEY` | Web enrichment |
 | `CHRONICLE_REDACT_RECALL` | Hermes plugin: `0` stops masking emails/phones/IDs in recalled memory |
 
@@ -51,12 +52,26 @@ set -a; source .env; set +a
 Every teammate calls models through one client. Never import `openai`
 directly.
 
+CI enforces this: `tests/guard/test_egress_boundary.py` fails if code outside
+`chronicle/guard/` imports `openai`, `requests`, `httpx`, `aiohttp`,
+`urllib.request` or `http.client`, or hard-codes the Token Factory / Tavily URLs.
+The only exception is the Tavily client, which has its own PII gate. The sandbox
+policy can't catch this, because it sees one Python process.
+
 ```python
 from chronicle.guard import llm
 
 text = llm.complete([{"role": "user", "content": "Summarise Alice's email"}])
 data = llm.complete(messages, schema={"type": "object", "properties": {...}})  # returns a dict
+raw = llm.complete(messages, schema={"name": "claims", "schema": {...}})      # returns the reply text
 ```
+
+Pass a bare JSON Schema to get a parsed dict back. Pass an OpenAI
+`json_schema` envelope (`{"name": ..., "schema": ...}`) to get the raw reply
+text and parse it yourself, e.g. to strip a reasoning model's `<think>` block.
+If the endpoint rejects `response_format`, the client retries without it and
+stops sending it. For your own settings, build a client:
+`LLMClient(default_model=..., max_tokens=8192, timeout=180)`.
 
 What it does for you:
 
@@ -67,6 +82,14 @@ What it does for you:
 - **Logs** every outbound call (model, tokens, which PII types were redacted,
   a redacted preview) to `~/.chronicle/egress.log`. The UI shows this log.
 
+Ingestion uses this client too, so corpus text is pseudonymised before it
+reaches Nebius and quotes come back with the real values restored (names are
+only caught with the NER extra below):
+
+```bash
+python -m chronicle.ingest --corpus DIR --state DIR [--model ID] [--timeout 180] [--max-tokens 8192]
+```
+
 Basic detection is regex-only (emails, phones, SSNs, cards, IPs, URLs). For
 names, organisations and places install the NER extra:
 
@@ -74,6 +97,20 @@ names, organisations and places install the NER extra:
 uv sync --extra dev --extra privacy
 uv run python -m spacy download en_core_web_sm
 ```
+
+## Web enrichment (Tavily)
+
+```python
+from chronicle.integrations.tavily import TavilyClient, PrivacyBlocked
+
+results = TavilyClient().search("Nebius Token Factory pricing", max_results=5)
+```
+
+Needs `TAVILY_API_KEY`. A search query can't be pseudonymised (nobody can search
+for `PERSON_1`), so a query that identifies a person is refused instead:
+emails, phone numbers, IDs, and names when the NER extra is installed raise
+`PrivacyBlocked` and nothing is sent. Organisations, places and links are
+allowed. Every query that is sent goes to the egress log as provider `tavily`.
 
 ## Memory Time Machine UI
 
@@ -115,7 +152,8 @@ the policy blocked, run `openshell logs <sandbox> --source sandbox`.
 | `deploy/hermes-plugin/chronicle/` | Hermes plugin; see its README for hooks and tools |
 
 In Hermes, the agent gets `chronicle_recall` (with `as_of: YYYY-MM-DD` to ask
-about a past date) and `chronicle_remember`. The plugin currently stores memory
+about a past date) and `chronicle_remember`, plus `chronicle_web_search` when
+`TAVILY_API_KEY` is set. The plugin currently stores memory
 in-process until the SQLite store lands, so memory does not survive a Hermes
 restart yet.
 

@@ -14,16 +14,21 @@ import os
 import re
 import threading
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from typing import Any, Protocol
 
 from chronicle.guard.pii_detector import detect
 from chronicle.guard.pseudonymizer import PseudonymMapping, pseudonymize
+from chronicle.integrations.tavily import PrivacyBlocked, TavilyClient, TavilyError
 from chronicle.memory.api import MemoryAPI
 from chronicle.schema import Event, Source
 
 try:  # Only importable inside a Hermes process.
-    from agent.memory_provider import MemoryProvider, is_trivial_prompt, spawn_context_thread
+    from agent.memory_provider import (
+        MemoryProvider,
+        is_trivial_prompt,
+        spawn_context_thread,
+    )
 except ImportError:
     from abc import ABC as MemoryProvider
 
@@ -168,10 +173,28 @@ _TOOLS = [
     },
 ]
 
+_WEB_TOOL = {
+    "name": "chronicle_web_search",
+    "description": (
+        "Search the public web (Tavily) to enrich memory about organisations, products, places "
+        "or public events. Queries naming private people or containing emails, phone numbers or "
+        "IDs are refused."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "What to search for."},
+            "max_results": {"type": "integer", "description": "Optional, 1-20 (default 5)."},
+        },
+        "required": ["query"],
+    },
+}
+
 
 class ChronicleMemoryProvider(MemoryProvider):
-    def __init__(self, backend: ChronicleBackend | None = None) -> None:
+    def __init__(self, backend: ChronicleBackend | None = None, web: TavilyClient | None = None) -> None:
         self._backend = backend or InMemoryBackend()
+        self._web = web or TavilyClient()
         self._mapping = PseudonymMapping()
         self._session_id = ""
         self._hermes_home = ""
@@ -196,7 +219,14 @@ class ChronicleMemoryProvider(MemoryProvider):
                 "secret": True,
                 "required": False,
                 "env_var": "NEBIUS_API_KEY",
-            }
+            },
+            {
+                "key": "tavily_api_key",
+                "description": "Tavily API key (optional; enables chronicle_web_search)",
+                "secret": True,
+                "required": False,
+                "env_var": "TAVILY_API_KEY",
+            },
         ]
 
     def system_prompt_block(self) -> str:
@@ -206,7 +236,7 @@ class ChronicleMemoryProvider(MemoryProvider):
         )
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
-        return _TOOLS
+        return [*_TOOLS, _WEB_TOOL] if self._web.configured else list(_TOOLS)
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
         try:
@@ -220,7 +250,14 @@ class ChronicleMemoryProvider(MemoryProvider):
                     occurred_at=_parse_day(args.get("occurred_at"), end_of_day=False),
                 )
                 return json.dumps({"ok": True, "id": memory_id})
+            if tool_name == "chronicle_web_search":
+                found = self._web.search(args["query"], max_results=int(args.get("max_results") or 5))
+                return json.dumps({"results": [r.to_dict() for r in found]})
             return json.dumps({"error": f"unknown tool: {tool_name}"})
+        except PrivacyBlocked as exc:
+            return json.dumps({"error": str(exc), "blocked": True, "pii_types": exc.pii_types})
+        except TavilyError as exc:
+            return json.dumps({"error": str(exc)})
         except (KeyError, ValueError) as exc:
             return json.dumps({"error": f"bad arguments: {exc}"})
 
@@ -284,17 +321,17 @@ class ChronicleMemoryProvider(MemoryProvider):
 # ---------------------------------------------------------------------------
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _parse_day(value: str | None, *, end_of_day: bool = True) -> datetime | None:
     if not value:
         return None
     day = date.fromisoformat(value[:10])
-    return datetime.combine(day, time.max if end_of_day else time.min, tzinfo=timezone.utc)
+    return datetime.combine(day, time.max if end_of_day else time.min, tzinfo=UTC)

@@ -60,7 +60,11 @@ CLAIMS_SCHEMA = {
 
 
 class LLM(Protocol):
-    """Minimal interface P1 needs; P4's ``guard.llm_client`` provides the real one."""
+    """Minimal interface P1 needs; ``chronicle.guard.LLMClient`` provides the real one.
+
+    Given the ``json_schema`` envelope ``CLAIMS_SCHEMA``, the guard client returns the raw
+    reply text with pseudonyms already restored, so quotes still match the document.
+    """
 
     def complete(self, messages: list[dict[str, str]], schema: dict[str, Any] | None = None) -> str: ...
 
