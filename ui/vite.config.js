@@ -12,4 +12,10 @@ export default defineConfig({
       },
     },
   },
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.js"],
+    // West of UTC, so date-only values that render in local time show the wrong day.
+    env: { TZ: "America/Los_Angeles" },
+  },
 });

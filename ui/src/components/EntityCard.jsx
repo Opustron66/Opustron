@@ -4,7 +4,7 @@ import { allFactsForSubject } from "../services/api";
 
 const fmt = (d) =>
   d
-    ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+    ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })
     : "now";
 
 export default function EntityCard({ entity, allFacts, asOf }) {
