@@ -391,6 +391,7 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "pyyaml" },
 ]
 privacy = [
     { name = "presidio-analyzer" },
@@ -406,6 +407,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "spacy", marker = "extra == 'privacy'", specifier = ">=3.7" },
 ]
 provides-extras = ["dev", "privacy"]
