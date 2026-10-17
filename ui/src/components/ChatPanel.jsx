@@ -6,7 +6,18 @@ const fmt = (d) =>
     day: "numeric",
     month: "short",
     year: "2-digit",
+    timeZone: "UTC",
   });
+
+// Answers quote ingested documents, so content is untrusted: build React nodes, never HTML.
+function renderInline(text) {
+  return text.split("\n").map((line, i) => (
+    <React.Fragment key={i}>
+      {i > 0 && <br />}
+      {line.split(/\*\*(.+?)\*\*/g).map((part, j) => (j % 2 ? <strong key={j}>{part}</strong> : part))}
+    </React.Fragment>
+  ));
+}
 
 export default function ChatPanel({ asOf }) {
   const [messages, setMessages] = useState([
@@ -89,14 +100,7 @@ export default function ChatPanel({ asOf }) {
       <div className="chat-messages">
         {messages.map((m, i) => (
           <div key={i} className={`chat-message chat-${m.role}`}>
-            <div
-              className="chat-content"
-              dangerouslySetInnerHTML={{
-                __html: m.content
-                  .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-                  .replace(/\n/g, "<br/>"),
-              }}
-            />
+            <div className="chat-content">{renderInline(m.content)}</div>
             {m.citations?.length > 0 && (
               <div className="chat-citations">
                 {m.citations.map((c) => (
