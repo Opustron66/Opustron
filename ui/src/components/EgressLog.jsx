@@ -55,7 +55,7 @@ export default function EgressLog() {
             ) : (
               <span className="egress-badge clean">✓ clean</span>
             )}
-            {e.pii_types.length > 0 && (
+            {e.pii_types?.length > 0 && (
               <span className="egress-pii-types">
                 {e.pii_types.join(", ")}
               </span>
