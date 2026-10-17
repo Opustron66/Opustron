@@ -33,7 +33,9 @@ body {
 .app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  /* Fixed to the window so long entity lists scroll inside the sidebar. */
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* ── Header ──────────────────────────────────────────────────────────────── */
@@ -58,6 +60,16 @@ body {
   font-family: var(--mono);
   font-size: 11px;
 }
+.app-corpus-label.source-live,
+.app-corpus-label.source-empty { color: var(--green); border-color: rgba(74,222,128,0.35); }
+.app-corpus-label.source-sample { color: var(--text-muted); }
+.app-empty {
+  flex: 1;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-dim);
+}
+.app-empty code { font-family: var(--mono); color: var(--text); }
 
 /* ── Timeline section ─────────────────────────────────────────────────────── */
 .app-timeline-section {

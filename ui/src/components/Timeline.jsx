@@ -1,4 +1,5 @@
 import React, { useMemo } from "react";
+import { isTrueAt } from "../services/api";
 
 const fmt = (d) =>
   d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit", timeZone: "UTC" });
@@ -65,9 +66,9 @@ export default function Timeline({ startDate, endDate, value, onChange, facts = 
 
       <div className="timeline-facts">
         {facts.map((f) => {
-          const from = new Date(f.valid_from);
+          const from = f.valid_from ? new Date(f.valid_from) : startDate;
           const to = f.valid_to ? new Date(f.valid_to) : endDate;
-          const isActive = from <= value && value <= to;
+          const isActive = isTrueAt(f, value);
           const fromPct = Math.max(0, ((from - startDate) / (endDate - startDate)) * 100);
           const toPct = Math.min(100, ((to - startDate) / (endDate - startDate)) * 100);
           return (

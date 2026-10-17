@@ -44,7 +44,9 @@ Web searches are refused, and nothing is sent, when the query contains an
 email, phone number, ID or a person's name. The agent gets
 `{"blocked": true, "pii_types": [...]}` back. Sent queries are logged too.
 
-## Current limitation
+## Storage
 
-Storage is the in-memory placeholder (`InMemoryBackend`) until the SQLite
-bi-temporal store is wired in, so memory does not survive a Hermes restart yet.
+Memory lives in Chronicle's SQLite bi-temporal store at
+`$HERMES_HOME/chronicle/memory.sqlite3`, one database per Hermes profile, so it
+survives restarts and profiles stay separate. Set `CHRONICLE_MEMORY_DB` to share
+one database, e.g. with the memory server the UI reads.

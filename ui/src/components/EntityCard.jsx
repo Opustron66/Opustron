@@ -1,23 +1,29 @@
 import React, { useState } from "react";
 import CitationPopover from "./CitationPopover";
-import { allFactsForSubject } from "../services/api";
+import { factsAbout, hasEndedBy, isTrueAt } from "../services/api";
 
-const fmt = (d) =>
+const fmt = (d, missing) =>
   d
     ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })
-    : "now";
+    : missing;
+
+const words = (predicate) => predicate.replaceAll("_", " ");
+
+// "Alice owns payments" reads as "owns: payments" on Alice's card and
+// "who owns: Alice" on the payments card.
+function groupFor(entityName, fact) {
+  return fact.subject === entityName
+    ? { label: words(fact.predicate), other: fact.object }
+    : { label: `who ${words(fact.predicate)}`, other: fact.subject };
+}
 
 export default function EntityCard({ entity, allFacts, asOf }) {
   const [openCitation, setOpenCitation] = useState(null);
 
-  const subjectFacts = allFactsForSubject(allFacts, entity.name);
-  const asOfDate = new Date(asOf);
-
-  // Group facts by predicate
-  const byPredicate = {};
-  subjectFacts.forEach((f) => {
-    if (!byPredicate[f.predicate]) byPredicate[f.predicate] = [];
-    byPredicate[f.predicate].push(f);
+  const groups = {};
+  factsAbout(allFacts, entity.name).forEach((f) => {
+    const { label, other } = groupFor(entity.name, f);
+    (groups[label] ||= []).push({ fact: f, other });
   });
 
   return (
@@ -28,28 +34,26 @@ export default function EntityCard({ entity, allFacts, asOf }) {
       </header>
 
       <div className="entity-facts">
-        {Object.entries(byPredicate).map(([predicate, facts]) => {
-          const sorted = [...facts].sort(
-            (a, b) => new Date(a.valid_from) - new Date(b.valid_from)
+        {Object.entries(groups).map(([label, rows]) => {
+          const sorted = [...rows].sort(
+            (a, b) => new Date(a.fact.valid_from || 0) - new Date(b.fact.valid_from || 0)
           );
           return (
-            <div key={predicate} className="entity-predicate-group">
-              <span className="entity-predicate">{predicate}</span>
+            <div key={label} className="entity-predicate-group">
+              <span className="entity-predicate">{label}</span>
               <div className="entity-values">
-                {sorted.map((f) => {
-                  const from = new Date(f.valid_from);
-                  const to = f.valid_to ? new Date(f.valid_to) : null;
-                  const isCurrent = from <= asOfDate && (to === null || asOfDate <= to);
-                  const isSuperseded = to !== null && asOfDate > to;
+                {sorted.map(({ fact: f, other }) => {
+                  const isCurrent = isTrueAt(f, asOf);
+                  const isSuperseded = hasEndedBy(f, asOf);
 
                   return (
                     <div
                       key={f.fact_id}
                       className={`fact-row ${isCurrent ? "fact-current" : ""} ${isSuperseded ? "fact-superseded" : ""}`}
                     >
-                      <span className="fact-object">{f.object}</span>
+                      <span className="fact-object">{other}</span>
                       <span className="fact-validity">
-                        {fmt(f.valid_from)} → {fmt(f.valid_to)}
+                        {fmt(f.valid_from, "unknown")} → {fmt(f.valid_to, "now")}
                       </span>
                       <button
                         className="citation-btn"
