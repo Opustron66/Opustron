@@ -43,6 +43,7 @@ set -a; source .env; set +a
 | `NEBIUS_API_KEY` | Nebius Token Factory (all model calls) |
 | `NEBIUS_BASE_URL` | Defaults to `https://api.tokenfactory.nebius.com/v1/` |
 | `CHRONICLE_MODEL` | Defaults to the cheap dev model; use the large model only for official benchmark runs |
+| `CHRONICLE_MAX_TOKENS` | Default completion budget for `chronicle.guard.llm` (1024). Reasoning models need ~8192 |
 | `TAVILY_API_KEY` | Web enrichment |
 | `CHRONICLE_REDACT_RECALL` | Hermes plugin: `0` stops masking emails/phones/IDs in recalled memory |
 
@@ -56,7 +57,15 @@ from chronicle.guard import llm
 
 text = llm.complete([{"role": "user", "content": "Summarise Alice's email"}])
 data = llm.complete(messages, schema={"type": "object", "properties": {...}})  # returns a dict
+raw = llm.complete(messages, schema={"name": "claims", "schema": {...}})      # returns the reply text
 ```
+
+Pass a bare JSON Schema to get a parsed dict back. Pass an OpenAI
+`json_schema` envelope (`{"name": ..., "schema": ...}`) to get the raw reply
+text and parse it yourself, e.g. to strip a reasoning model's `<think>` block.
+If the endpoint rejects `response_format`, the client retries without it and
+stops sending it. For your own settings, build a client:
+`LLMClient(default_model=..., max_tokens=8192, timeout=180)`.
 
 What it does for you:
 
@@ -66,6 +75,14 @@ What it does for you:
 - **Caches** responses in `~/.chronicle/llm_cache/`, so reruns cost nothing.
 - **Logs** every outbound call (model, tokens, which PII types were redacted,
   a redacted preview) to `~/.chronicle/egress.log`. The UI shows this log.
+
+Ingestion uses this client too, so corpus text is pseudonymised before it
+reaches Nebius and quotes come back with the real values restored (names are
+only caught with the NER extra below):
+
+```bash
+python -m chronicle.ingest --corpus DIR --state DIR [--model ID] [--timeout 180] [--max-tokens 8192]
+```
 
 Basic detection is regex-only (emails, phones, SSNs, cards, IPs, URLs). For
 names, organisations and places install the NER extra:
