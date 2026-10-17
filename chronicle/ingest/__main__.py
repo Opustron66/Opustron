@@ -4,8 +4,12 @@ import argparse
 import sys
 from pathlib import Path
 
-from .llm import OpenAICompatLLM
+from chronicle.guard import LLMClient
+
 from .pipeline import ingest_corpus
+
+# Nemotron reasoning models spend thousands of tokens thinking before the JSON answer.
+INGEST_MAX_TOKENS = 8192
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -16,14 +20,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default=None)
     p.add_argument("--workers", type=int, default=6, help="parallel extraction calls")
     p.add_argument("--timeout", type=float, default=180, help="per-call LLM timeout, seconds")
+    p.add_argument("--max-tokens", type=int, default=INGEST_MAX_TOKENS, help="per-call completion budget")
     args = p.parse_args(argv)
     if not args.corpus.is_dir():
         print(f"corpus not found: {args.corpus}", file=sys.stderr)
         return 2
-    llm = OpenAICompatLLM(model=args.model, timeout=args.timeout)
+    # Privacy-routed: corpus text is pseudonymised before it leaves the machine and
+    # every call is written to ~/.chronicle/egress.log.
+    llm = LLMClient(default_model=args.model, timeout=args.timeout, max_tokens=args.max_tokens)
     stats = ingest_corpus(args.corpus, args.state, llm, model=llm.model, workers=args.workers)
     print(f"[chronicle] part={args.part} {stats}", file=sys.stderr)
-    print(f"[chronicle] llm calls={llm.calls} prompt_tokens={llm.prompt_tokens} completion_tokens={llm.completion_tokens}", file=sys.stderr)
     return 1 if stats.failed and not stats.documents else 0
 
 
