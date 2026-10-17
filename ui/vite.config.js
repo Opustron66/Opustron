@@ -6,6 +6,12 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // P4's egress log server (python -m chronicle.guard.egress_server). Listed
+      // first so it wins over the general /api rule. 127.0.0.1, not localhost:
+      // Node may resolve localhost to ::1 and the server only listens on IPv4.
+      "/api/egress": {
+        target: "http://127.0.0.1:8001",
+      },
       "/api": {
         target: "http://localhost:8000",
         changeOrigin: true,

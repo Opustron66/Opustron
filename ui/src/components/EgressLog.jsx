@@ -8,9 +8,14 @@ const fmtTs = (ts) =>
     second: "2-digit",
   });
 
+const destination = (e) =>
+  e.provider === "tavily" ? "Tavily search" : (e.model || e.provider || "unknown").split("/").pop();
+
 export default function EgressLog() {
   const [entries, setEntries] = useState(MOCK.egressEntries);
-  const [error, setError] = useState(null);
+  // "sample": never reached the server, showing made-up entries.
+  // "offline": reached it before, still showing the last real entries.
+  const [status, setStatus] = useState("sample");
 
   useEffect(() => {
     let cancelled = false;
@@ -19,10 +24,10 @@ export default function EgressLog() {
         const data = await getEgressLog(30);
         if (!cancelled) {
           setEntries(data);
-          setError(null);
+          setStatus("live");
         }
       } catch {
-        // Backend not up yet — keep showing mock data
+        if (!cancelled) setStatus((s) => (s === "sample" ? "sample" : "offline"));
       }
     };
     poll();
@@ -37,19 +42,22 @@ export default function EgressLog() {
     <section className="egress-log">
       <header className="egress-header">
         <h2 className="egress-title">Egress Log</h2>
+        <span className={`egress-status ${status}`}>
+          {{ live: "● LIVE", offline: "offline", sample: "sample data" }[status]}
+        </span>
         <span className="egress-subtitle">
-          All outbound LLM calls — showing redacted payloads only
+          Everything that left this machine: model calls and web searches, as sent
         </span>
       </header>
 
       <div className="egress-entries">
         {entries.length === 0 && (
-          <p className="egress-empty">No calls yet.</p>
+          <p className="egress-empty">Nothing has left this machine yet.</p>
         )}
         {entries.map((e, i) => (
-          <div key={i} className={`egress-entry ${e.redacted ? "egress-redacted" : "egress-clean"}`}>
+          <div key={`${e.ts}-${i}`} className={`egress-entry ${e.redacted ? "egress-redacted" : "egress-clean"}`}>
             <span className="egress-ts">{fmtTs(e.ts)}</span>
-            <span className="egress-provider">{e.model.split("/").pop()}</span>
+            <span className="egress-provider">{destination(e)}</span>
             {e.redacted ? (
               <span className="egress-badge redacted">🔒 redacted</span>
             ) : (
@@ -60,9 +68,11 @@ export default function EgressLog() {
                 {e.pii_types.join(", ")}
               </span>
             )}
-            <span className="egress-tokens">
-              {e.prompt_tokens}↑ {e.completion_tokens}↓
-            </span>
+            {(e.prompt_tokens > 0 || e.completion_tokens > 0) && (
+              <span className="egress-tokens">
+                {e.prompt_tokens}↑ {e.completion_tokens}↓
+              </span>
+            )}
             <code className="egress-preview">{e.request_preview}</code>
           </div>
         ))}
