@@ -6,12 +6,13 @@ from chronicle.memory import MemoryAPI
 from chronicle.memory.api import CLAIMS_FILE, DB_FILE
 
 from .models import Evidence, QueryPlan
+from .planner import lexical_query
 
 
 def retrieve_memory(plan: QueryPlan, memory: MemoryAPI, top_k: int = 8) -> list[Evidence]:
     """Use P2's temporal search, retaining each source citation."""
     results: dict[str, Evidence] = {}
-    for hit in memory.search(plan.question, as_of=plan.reference_date, k=top_k, kind="claim"):
+    for hit in memory.search(lexical_query(plan.question), as_of=plan.reference_date, k=top_k, kind="claim"):
         fact = hit.fact
         for source in fact.sources:
             claim = fact.to_claim().model_dump(mode="json")
