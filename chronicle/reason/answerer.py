@@ -33,9 +33,10 @@ def generate_answer(plan: QueryPlan, evidence: list[Evidence]) -> AnswerResult:
     if not evidence:
         return AnswerResult("Not in the corpus", [])
     context = "\n\n".join(f"[{e.doc_id}] date={e.date}\n{e.text}" for e in evidence)
+    reference = f"Answer as of {plan.reference_date.isoformat()}.\n\n" if plan.reference_date else ""
     messages = [
         {"role": "system", "content": _contract()},
-        {"role": "user", "content": f"EVIDENCE:\n{context}\n\nQUESTION: {plan.question}"},
+        {"role": "user", "content": f"{reference}EVIDENCE:\n{context}\n\nQUESTION: {plan.question}"},
     ]
     parsed = llm.complete(messages, schema=ANSWER_SCHEMA)
     if not isinstance(parsed, dict):

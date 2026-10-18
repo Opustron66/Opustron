@@ -68,13 +68,13 @@ export default function ChatPanel({ asOf }) {
         },
       ]);
     } catch {
-      // Mock response when backend is not running
+      // A failed request must never become an invented corpus answer.
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: `[Backend not connected — this is a scaffold response]\n\nAs of ${fmt(asOf)}: Alice Chen owned the payments service (valid 1 May → 14 May). Source: email_001`,
-          citations: [{ doc_id: "email_001" }],
+          content: "Unable to get an answer. Check that the memory server is running and its model credentials are configured, then try again.",
+          citations: [],
           ts: Date.now(),
         },
       ]);

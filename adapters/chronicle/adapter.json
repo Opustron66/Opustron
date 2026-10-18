@@ -1,6 +1,6 @@
 {
   "name": "chronicle",
-  "description": "Chronicle P3 baseline: shared P1 claim ingestion, claim retrieval and privacy-routed answers. P2 temporal-store integration pending.",
+  "description": "Chronicle P3: shared P1 ingestion, P2 temporal retrieval and privacy-routed answers, using the same reasoning pipeline as UI chat.",
   "model": "SET_TO_ACTUAL_MODEL_ID",
   "accounting": "proxy",
   "ingest": ["python", "-m", "chronicle.ingest", "--corpus", "{corpus}", "--state", "{state}"],

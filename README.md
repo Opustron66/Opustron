@@ -152,6 +152,7 @@ python -m chronicle.memory serve --state .tmp/chronicle   # UI API on http://loc
 | `GET /api/timeline?start=&end=` | Facts starting or ending in the window |
 | `GET /api/search?q=&as_of=&k=` | Ranked facts |
 | `GET /api/span` | First and last day in memory (slider range) |
+| `POST /api/ask` | `{answer, source_ids, citations}` for `{question, as_of?}`; answers through the privacy guard |
 
 The server reloads `claims.jsonl` when P1 appends to it. Intervals are half-open: on a
 handover day the new owner holds. `chronicle.memory.backend.SQLiteBackend` implements the
@@ -162,9 +163,11 @@ Hermes `ChronicleBackend` protocol (`$CHRONICLE_MEMORY_DB`, default
 
 The benchmark adapter now runs P1's `python -m chronicle.ingest`. It uses the
 same extraction, entity resolution, incremental ingestion and `Claim` schema
-as normal ingestion. P3 retrieves evidence from P1's `state/claims.jsonl`,
-retaining source document IDs, verbatim quotes, observation dates and validity
-fields. There is no separate raw-document SQLite ingestion path.
+as normal ingestion. UI chat and benchmark answering both retrieve evidence
+through P2's temporal search, retaining source document IDs, verbatim quotes,
+observation dates and validity fields. The benchmark opens `state/memory.sqlite3`
+and syncs P1's `state/claims.jsonl` on each question, then closes its connection.
+There is no separate raw-document SQLite ingestion path.
 
 ```powershell
 uv run python -m chronicle.ingest --corpus tests/fixtures/corpus/part_a --state .tmp/chronicle
@@ -182,26 +185,31 @@ Existing `chronicle_adapter.sqlite3` state must be re-ingested into a fresh
 state directory. It is never used as a fallback. Malformed question records
 are skipped with a line-number diagnostic on stderr; stdout stays JSONL.
 
-### Proposed P1/P2/P3 handoff (agreement pending)
+### P1/P2/P3 integration status
 
-P1 ingestion is shared now. P2 currently exposes only an in-memory event store,
-so this baseline reads P1's persisted claims directly. The proposed next
-handoff is before a full-system benchmark run, once P2 provides persistent
-claim ingestion and search that preserve `Claim` provenance, validity and
-observation dates across separate ingest/answer processes. Sara/P1 and P2
-still need to confirm the interface and timing; no agreement is claimed here.
+P1 ingestion is shared. P2 provides persistent claim storage and temporal search.
+UI chat and benchmark answering use the same P2 `MemoryAPI.search`, evidence
+conversion and privacy-routed answerer. Existing `claims.jsonl` state is loaded
+into P2 automatically, and subsequent questions pick up appended claims.
+An existing P2 database also works without the claims file.
 
 - P1 owns extraction and the shared `Claim` contract.
 - P2 owns durable claim storage, supersession and temporal search.
-- P3 will switch retrieval to P2's API when it lands, with tests for A/B
-  ingestion, restart persistence, citations and as-of queries. Ingestion will
-  continue to use P1's entry point.
+- P3 uses P2 for both UI chat and benchmark retrieval.
+  Ingestion continues to use P1's entry point.
 
-Current retrieval ranks claims by keyword overlap. It does not resolve
-supersession or guarantee correct as-of answers; temporal integration,
-live-provider behavior, official benchmark scores and final ablations are not
-verified by the unit tests. Do not compare legacy raw-document runs with
-claim-based runs as if they used identical ingestion.
+Both paths apply P2's supersession and as-of filters. The benchmark JSONL input
+optionally accepts `"as_of":"2026-06-20"` to supply the same date context as
+the UI slider. Explicit dates in the question override that context; malformed
+`as_of` values are skipped with a diagnostic. Without `as_of` or an explicit
+question date, historical evidence remains searchable. Match the state and date
+context when comparing UI and benchmark answers. Output remains
+`{id, answer, source_ids}`.
+
+Regression tests compare the exact model prompts, filtered evidence and citations
+from UI and JSONL requests. They do not verify live-provider behavior, official
+benchmark scores or final ablations. Do not compare legacy raw-document runs
+with current temporal-store runs as if they used identical retrieval.
 
 Update `adapters/chronicle/adapter.json`'s `model` to the actual model for an
 official run. Launch NVIDIA's `python -m bench.runner --adapter
@@ -225,7 +233,7 @@ npm test         # Vitest + Testing Library
 another terminal, serve an ingested state dir:
 
 ```bash
-uv run python -m chronicle.memory serve --state DIR   # DIR holds P1's claims.jsonl
+uv run python -m dotenv -f .env run -- python -m chronicle.memory serve --state DIR
 ```
 
 The header then shows `● Live memory · N facts`, entity cards and the timeline
@@ -233,8 +241,32 @@ use the store's facts, and the slider starts on the latest date. Cards show an
 entity on either side of a fact ("Alice Chen: owns → payments service", and
 "payments service: who owns → Alice Chen"). As in the store, `valid_to` is the
 first day a fact is no longer true, so on a handover day only the new owner is
-current. Without the server the UI shows labelled sample data. Chat (`/api/ask`)
-is still a placeholder reply.
+current. Without the server the memory views show labelled sample data.
+
+**Real chat.** The memory server also serves `POST /api/ask`. Start it with
+`NEBIUS_API_KEY`, `CHRONICLE_MODEL` and a sufficient `CHRONICLE_MAX_TOKENS`
+(for example, 16384 for testing a reasoning model) loaded into that server
+process. Credentials set in another terminal are not inherited. For an existing
+Windows virtual environment, run from the repo root:
+
+```cmd
+.venv\Scripts\python.exe -m dotenv -f .env run -- .venv\Scripts\python.exe -m chronicle.memory serve --state .tmp/accuracy-smoke
+```
+
+Questions without a date use the slider's day. An explicit ISO or English month
+date overrides it: with the slider at 20 June 2026, "Who owned billing on June 9?"
+retrieves facts valid on 9 June 2026. Yearless dates use the slider's year (or the
+current year outside the UI). Before/after/history questions retain historical
+evidence instead of applying a single-day filter. Dates are valid-time filters,
+not a limit on when Chronicle learned a fact; `known_at` questions, relative dates
+and arbitrary date ranges are not implemented in chat's starter planner.
+
+Chat returns source document IDs as citation chips. No matching evidence produces
+"Not in the corpus" without calling a model. Invalid requests return 422, invalid
+calendar dates in questions return 400, and answer-generation failures return a
+generic 502 without provider details. The UI displays an error on failed requests
+and never substitutes a sample corpus answer. Answer wording still depends on the
+configured model; retrieval does not guarantee answer accuracy.
 
 **Live egress log.** In a second terminal, run:
 
