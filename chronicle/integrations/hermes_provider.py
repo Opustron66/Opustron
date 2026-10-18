@@ -1,9 +1,9 @@
 """Chronicle as a Hermes Agent memory provider.
 
 Hermes loads this through deploy/hermes-plugin/chronicle (see its README).
-The provider talks to Chronicle only through ``ChronicleBackend``, so the
-in-memory placeholder below can be swapped for the real bi-temporal store
-without touching the Hermes side.
+The provider talks to Chronicle only through ``ChronicleBackend``. By default
+that is P2's SQLite store, one database per Hermes profile, so memory survives
+restarts.
 """
 
 from __future__ import annotations
@@ -11,17 +11,16 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import threading
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
+from pathlib import Path
 from typing import Any, Protocol
 
 from chronicle.guard.pii_detector import detect
 from chronicle.guard.pseudonymizer import PseudonymMapping, pseudonymize
 from chronicle.integrations.tavily import PrivacyBlocked, TavilyClient, TavilyError
-from chronicle.memory.api import MemoryAPI
-from chronicle.schema import Event, Source
+from chronicle.memory.backend import SQLiteBackend, default_db_path
 
 try:  # Only importable inside a Hermes process.
     from agent.memory_provider import (
@@ -48,8 +47,6 @@ RECALL_LIMIT = 5
 # Names stay readable because the user typed them into Hermes anyway; contact
 # and financial identifiers recalled from documents do not leave the machine.
 _RECALL_REDACT_TYPES = {"EMAIL_ADDRESS", "PHONE_NUMBER", "US_SSN", "CREDIT_CARD", "IP_ADDRESS"}
-
-_WORD_RE = re.compile(r"[a-z0-9]{3,}")
 
 
 # ---------------------------------------------------------------------------
@@ -89,54 +86,11 @@ class ChronicleBackend(Protocol):
     def recall(self, query: str, *, as_of: datetime | None = None, limit: int = RECALL_LIMIT) -> list[Recollection]: ...
 
 
-class InMemoryBackend:
-    """Placeholder over ``MemoryAPI`` until the SQLite bi-temporal store lands.
-
-    Facts are never deleted: superseding or retiring a fact closes its
-    ``valid_to``, so ``recall(as_of=...)`` still sees what was true then.
-    """
-
-    def __init__(self, api: MemoryAPI | None = None) -> None:
-        self._api = api or MemoryAPI()
-        self._lock = threading.Lock()
-
-    def remember(self, content, *, source, occurred_at=None, supersedes=None):
-        valid_from = _utc(occurred_at) or _now()
-        with self._lock:
-            if supersedes:
-                self._close(supersedes, valid_from)
-            event = Event(content=content, source=Source(uri=source, kind="hermes"), occurred_at=valid_from)
-            self._api.remember(event)
-        return event.event_id
-
-    def retire(self, content, *, at):
-        with self._lock:
-            self._close(content, _utc(at))
-
-    def recall(self, query, *, as_of=None, limit=RECALL_LIMIT):
-        as_of = _utc(as_of) or _now()
-        terms = set(_WORD_RE.findall(query.casefold()))
-        scored = []
-        for event in self._api.list_memories():
-            valid_to = event.metadata.get("valid_to")
-            if event.occurred_at > as_of or (valid_to and valid_to <= as_of):
-                continue
-            score = len(terms & set(_WORD_RE.findall(event.content.casefold())))
-            if score:
-                scored.append((score, event.occurred_at, event))
-        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        return [
-            Recollection(e.event_id, e.content, e.source.uri, e.occurred_at, e.metadata.get("valid_to"))
-            for _, _, e in scored[:limit]
-        ]
-
-    def _close(self, content_or_id: str, at: datetime) -> None:
-        for event in self._api.list_memories():
-            if event.metadata.get("valid_to"):
-                continue
-            if content_or_id in (event.event_id, event.content):
-                event.metadata["valid_to"] = at
-                event.metadata["superseded_at"] = _now()
+def memory_db_path(hermes_home: str) -> Path:
+    """``$CHRONICLE_MEMORY_DB`` if set (e.g. to share the UI's database), else one per Hermes profile."""
+    if os.environ.get("CHRONICLE_MEMORY_DB") or not hermes_home:
+        return default_db_path()
+    return Path(hermes_home) / "chronicle" / "memory.sqlite3"
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +147,9 @@ _WEB_TOOL = {
 
 class ChronicleMemoryProvider(MemoryProvider):
     def __init__(self, backend: ChronicleBackend | None = None, web: TavilyClient | None = None) -> None:
-        self._backend = backend or InMemoryBackend()
+        # Without an explicit backend, initialize() opens the SQLite store under hermes_home.
+        self._backend = backend
+        self._owned_backend: SQLiteBackend | None = None
         self._web = web or TavilyClient()
         self._mapping = PseudonymMapping()
         self._session_id = ""
@@ -210,6 +166,10 @@ class ChronicleMemoryProvider(MemoryProvider):
     def initialize(self, session_id: str, **kwargs: Any) -> None:
         self._session_id = session_id
         self._hermes_home = str(kwargs.get("hermes_home", ""))
+        if self._backend is None:
+            path = memory_db_path(self._hermes_home)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._backend = self._owned_backend = SQLiteBackend(path)
 
     def get_config_schema(self) -> list[dict[str, Any]]:
         return [
@@ -304,6 +264,9 @@ class ChronicleMemoryProvider(MemoryProvider):
     def shutdown(self) -> None:
         if self._sync_thread and self._sync_thread.is_alive():
             self._sync_thread.join(timeout=5.0)
+        if self._owned_backend is not None:
+            self._owned_backend.close()
+            self._backend = self._owned_backend = None
 
     def _redact_text(self, text: str) -> str:
         if os.environ.get("CHRONICLE_REDACT_RECALL", "1") == "0":
@@ -322,12 +285,6 @@ class ChronicleMemoryProvider(MemoryProvider):
 
 def _now() -> datetime:
     return datetime.now(UTC)
-
-
-def _utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _parse_day(value: str | None, *, end_of_day: bool = True) -> datetime | None:
