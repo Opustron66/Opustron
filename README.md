@@ -226,6 +226,13 @@ question date, historical evidence remains searchable. Match the state and date
 context when comparing UI and benchmark answers. Output remains
 `{id, answer, source_ids}`.
 
+Recognized ISO/English calendar dates are removed from the lexical search text
+and retained as P2 temporal filters. This avoids matching an unrelated document
+solely because it contains the same year. The original question and reference
+date still reach the answerer; history comparisons retain historical evidence.
+Standalone numeric entity labels such as `Apollo 2026` are preserved. This is
+date-token separation, not a general semantic relevance or entailment verifier.
+
 Regression tests compare the exact model prompts, filtered evidence and citations
 from UI and JSONL requests. They do not verify live-provider behavior, official
 benchmark scores or final ablations. Do not compare legacy raw-document runs

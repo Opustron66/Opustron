@@ -17,6 +17,11 @@ class InvalidQueryDate(ValueError):
     """An explicit date in the question is not a calendar date."""
 
 
+def lexical_query(question: str) -> str:
+    """Keep parsed calendar dates out of lexical ranking, not out of the question."""
+    return " ".join(NAMED_DATE.sub(" ", ISO_DATE.sub(" ", question)).split())
+
+
 def plan_query(question: str, as_of: date | None = None) -> QueryPlan:
     lower = question.lower()
     history = any(word in lower for word in ("before", "after", "earlier than", "later than", "history"))
