@@ -86,6 +86,15 @@ What it does for you:
 - **Logs** every outbound call (model, tokens, which PII types were redacted,
   a redacted preview) to `~/.chronicle/egress.log`. The UI shows this log.
 
+Response-cache keys include the endpoint, model, schema, effective token budget
+and temperature. Changing the budget makes a fresh request. Empty, incomplete
+and unparseable structured replies are not cached; unusable existing entries
+are bypassed. Structured cache admission also checks required top-level fields
+and their declared types, while callers remain responsible for full validation.
+Only pseudonymised replies are stored. The versioned key ignores older entries
+without deleting them. Incomplete replies raise a safe error with finish reason
+and token budget after usage is logged; retries remain caller-controlled.
+
 Ingestion uses this client too, so corpus text is pseudonymised before it
 reaches Nebius and quotes come back with the real values restored:
 
