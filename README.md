@@ -163,9 +163,11 @@ Hermes `ChronicleBackend` protocol (`$CHRONICLE_MEMORY_DB`, default
 
 The benchmark adapter now runs P1's `python -m chronicle.ingest`. It uses the
 same extraction, entity resolution, incremental ingestion and `Claim` schema
-as normal ingestion. P3 retrieves evidence from P1's `state/claims.jsonl`,
-retaining source document IDs, verbatim quotes, observation dates and validity
-fields. There is no separate raw-document SQLite ingestion path.
+as normal ingestion. UI chat and benchmark answering both retrieve evidence
+through P2's temporal search, retaining source document IDs, verbatim quotes,
+observation dates and validity fields. The benchmark opens `state/memory.sqlite3`
+and syncs P1's `state/claims.jsonl` on each question, then closes its connection.
+There is no separate raw-document SQLite ingestion path.
 
 ```powershell
 uv run python -m chronicle.ingest --corpus tests/fixtures/corpus/part_a --state .tmp/chronicle
@@ -186,21 +188,28 @@ are skipped with a line-number diagnostic on stderr; stdout stays JSONL.
 ### P1/P2/P3 integration status
 
 P1 ingestion is shared. P2 provides persistent claim storage and temporal search.
-UI chat uses P2's `MemoryAPI.search` against the same state as the memory cards,
-then sends retrieved evidence through P3's privacy-routed answerer. The benchmark
-CLI still uses keyword retrieval over `claims.jsonl`; moving that path to P2
-remains a separate handoff.
+UI chat and benchmark answering use the same P2 `MemoryAPI.search`, evidence
+conversion and privacy-routed answerer. Existing `claims.jsonl` state is loaded
+into P2 automatically, and subsequent questions pick up appended claims.
+An existing P2 database also works without the claims file.
 
 - P1 owns extraction and the shared `Claim` contract.
 - P2 owns durable claim storage, supersession and temporal search.
-- P3 uses P2 for UI chat; benchmark retrieval still needs that integration.
+- P3 uses P2 for both UI chat and benchmark retrieval.
   Ingestion continues to use P1's entry point.
 
-Current benchmark retrieval ranks claims by keyword overlap. It does not resolve
-supersession or guarantee correct as-of answers; temporal integration,
-live-provider behavior, official benchmark scores and final ablations are not
-verified by the unit tests. Do not compare legacy raw-document runs with
-claim-based runs as if they used identical ingestion.
+Both paths apply P2's supersession and as-of filters. The benchmark JSONL input
+optionally accepts `"as_of":"2026-06-20"` to supply the same date context as
+the UI slider. Explicit dates in the question override that context; malformed
+`as_of` values are skipped with a diagnostic. Without `as_of` or an explicit
+question date, historical evidence remains searchable. Match the state and date
+context when comparing UI and benchmark answers. Output remains
+`{id, answer, source_ids}`.
+
+Regression tests compare the exact model prompts, filtered evidence and citations
+from UI and JSONL requests. They do not verify live-provider behavior, official
+benchmark scores or final ablations. Do not compare legacy raw-document runs
+with current temporal-store runs as if they used identical retrieval.
 
 Update `adapters/chronicle/adapter.json`'s `model` to the actual model for an
 official run. Launch NVIDIA's `python -m bench.runner --adapter

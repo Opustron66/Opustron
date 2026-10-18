@@ -2,6 +2,7 @@
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 # Works when called from the benchmark root or the Chronicle repo root.
@@ -25,7 +26,15 @@ def run(state: Path, instream=sys.stdin, outstream=sys.stdout):
                 file=sys.stderr,
             )
             continue
-        result = answer_question(question["question"], state)
+        as_of = question.get("as_of")
+        if as_of is not None:
+            try:
+                as_of = date.fromisoformat(as_of)
+            except (TypeError, ValueError):
+                print(f"[chronicle] skipping line {line_number}: invalid 'as_of' date", file=sys.stderr)
+                continue
+        result = (answer_question(question["question"], state, as_of=as_of) if as_of is not None
+                  else answer_question(question["question"], state))
         print(json.dumps({"id": question["id"], "answer": result.answer, "source_ids": result.source_ids}), file=outstream, flush=True)
 
 def main():
