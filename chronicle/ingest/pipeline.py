@@ -11,13 +11,15 @@ from chronicle.schema import Claim, Document, Event
 
 from .cache import DiskCache
 from .entity_resolver import EntityResolver, resolve
-from .extractor import LLM, ClaimExtractor, extract_entities
+from .extractor import LLM, ClaimExtractor, extract_entities, render_for_llm
 from .parsers.benchmark import iter_documents
 from .reconcile import ReconcileIndex
 from .roster import load_or_build_roster
 
 CLAIMS_FILE = "claims.jsonl"
 DONE_FILE = "ingested_docs.json"
+# Source text of every document, so the answer phase (which only gets --state) can quote it.
+DOCS_FILE = "docs.jsonl"
 
 
 class IngestPipeline:
@@ -49,6 +51,30 @@ def read_claims(path: Path) -> list[Claim]:
     return [Claim.model_validate_json(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def read_docs(path: Path) -> list[dict]:
+    """Rows of ``docs.jsonl``: doc_id, date, kind, part, text (header + body, mentions resolved)."""
+    if not path.is_file():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _write_docs(path: Path, docs: list[Document], roster) -> None:
+    """Append any document not yet in ``docs.jsonl``. Written for every doc, extraction or not."""
+    have = {row["doc_id"] for row in read_docs(path)}
+    with path.open("a", encoding="utf-8") as out:
+        for doc in docs:
+            if doc.doc_id in have:
+                continue
+            have.add(doc.doc_id)
+            out.write(json.dumps({
+                "doc_id": doc.doc_id,
+                "date": doc.doc_date.isoformat() if doc.doc_date else None,
+                "kind": doc.kind,
+                "part": doc.part,
+                "text": render_for_llm(doc, roster, known_people=False),
+            }, ensure_ascii=False) + "\n")
+
+
 def run_ingest(documents: Iterable[Document], state: Path, llm: LLM, *, model: str = "nemotron",
                cache_dir: Path | None = None, workers: int = 6) -> IngestStats:
     """Extract claims for each not-yet-ingested document and append them to ``state/claims.jsonl``.
@@ -72,6 +98,7 @@ def run_ingest(documents: Iterable[Document], state: Path, llm: LLM, *, model: s
 
     # Build / update the roster from all docs (pre-pass, cheap — no LLM)
     roster = load_or_build_roster(state, all_docs)
+    _write_docs(state / DOCS_FILE, all_docs, roster)
 
     extractor = ClaimExtractor(llm, model=model, cache=cache, roster=roster)
 

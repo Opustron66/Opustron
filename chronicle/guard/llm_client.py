@@ -34,10 +34,11 @@ _CACHE_DIR = Path.home() / ".chronicle" / "llm_cache"
 DEV_MODEL = "nvidia/nemotron-mini-4b-instruct"   # cheap, fast
 PROD_MODEL = "nvidia/nemotron-4-340b-instruct"    # official benchmark runs
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
-DEFAULT_MAX_TOKENS = 1024  # reasoning models (Nemotron) need ~8192: set max_tokens or CHRONICLE_MAX_TOKENS
+DEFAULT_MAX_TOKENS = 1024  # reasoning models (Nemotron) need 8192–32768: set max_tokens or CHRONICLE_MAX_TOKENS
 
 # HTTP statuses an OpenAI-compatible endpoint returns when it rejects response_format
 _SCHEMA_REJECTED_STATUSES = (400, 422)
+_FALSY = ("0", "false", "no", "off")
 
 
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -93,14 +94,19 @@ class LLMClient:
         max_tokens: int | None = None,
         timeout: float | None = None,
         transport: Callable[..., Any] | None = None,
+        thinking: bool | None = None,
     ) -> None:
         """
         transport: optional replacement for ``OpenAI().chat.completions.create``
         (takes its keyword arguments, returns an object with ``.choices`` and
         ``.usage``). Tests use it to run without the network.
+
+        thinking: switch a reasoning model's thinking on or off (Nemotron's
+        ``enable_thinking`` chat-template flag); None keeps the model default.
+        Falls back to CHRONICLE_THINKING.
         """
-        self._api_key = api_key or os.environ.get("NEBIUS_API_KEY", "")
-        self._base_url = base_url or os.environ.get("NEBIUS_BASE_URL", DEFAULT_BASE_URL)
+        self._api_key = api_key or os.environ.get("NEBIUS_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+        self._base_url = base_url or os.environ.get("NEBIUS_BASE_URL") or os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL)
         self._default_model = default_model or os.environ.get(
             "CHRONICLE_MODEL", DEV_MODEL
         )
@@ -112,7 +118,11 @@ class LLMClient:
         self._timeout = timeout
         self._transport = transport
         self._transport_lock = threading.Lock()
-        self._structured = True  # flips to False once the endpoint rejects json_schema
+        # CHRONICLE_STRUCTURED=false skips response_format; it also flips off once the endpoint rejects json_schema
+        self._structured = os.environ.get("CHRONICLE_STRUCTURED", "1").lower() not in _FALSY
+        if thinking is None and (env := os.environ.get("CHRONICLE_THINKING")):
+            thinking = env.lower() not in _FALSY
+        self.thinking = thinking
 
         if use_cache:
             _CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -159,7 +169,9 @@ class LLMClient:
         redacted_messages, mapping = router.redact_messages(messages)
 
         # Check cache
-        cache_key = self._cache_key(redacted_messages, schema, model or self._default_model)
+        cache_key = self._cache_key(
+            redacted_messages, schema, model or self._default_model, max_tokens or self.max_tokens
+        )
         if self._use_cache:
             cached = self._load_cache(cache_key)
             if cached is not None:
@@ -218,6 +230,8 @@ class LLMClient:
         if schema is not None and self._structured:
             envelope = schema if _is_wrapped(schema) else {"name": "response", "schema": schema}
             kwargs["response_format"] = {"type": "json_schema", "json_schema": envelope}
+        if self.thinking is not None:
+            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": self.thinking}}
 
         try:
             resp = create(**kwargs)
@@ -228,10 +242,21 @@ class LLMClient:
             resp = create(**kwargs)
             self._structured = False
 
-        content = resp.choices[0].message.content or ""
+        choice = resp.choices[0]
+        content = choice.message.content
         usage = resp.usage
         prompt_tokens = usage.prompt_tokens if usage else 0
         completion_tokens = usage.completion_tokens if usage else 0
+        finish_reason = getattr(choice, "finish_reason", None)
+        if not content or finish_reason == "length":
+            # A reasoning model that runs out of budget returns nothing, or a reply cut off
+            # mid-thought. Neither is an answer: raise so the cause is visible and nothing
+            # is cached (otherwise JSON fragments from the thinking get parsed as the reply).
+            what = "truncated reply" if content else "empty reply"
+            raise RuntimeError(
+                f"{what} (finish_reason={finish_reason}, {completion_tokens} completion tokens)"
+                " — raise CHRONICLE_MAX_TOKENS or set CHRONICLE_THINKING=false"
+            )
         return content, prompt_tokens, completion_tokens
 
     def _get_transport(self) -> Callable[..., Any]:
@@ -255,8 +280,11 @@ class LLMClient:
         messages: list[dict[str, str]],
         schema: dict[str, Any] | None,
         model: str,
+        max_tokens: int,
     ) -> str:
-        payload = json.dumps({"messages": messages, "schema": schema, "model": model}, sort_keys=True)
+        # Every setting that changes the reply is in the key, so changing one never serves a stale reply.
+        payload = json.dumps({"messages": messages, "schema": schema, "model": model, "max_tokens": max_tokens,
+                              "structured": self._structured, "thinking": self.thinking}, sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()
 
     def _load_cache(self, key: str) -> str | None:

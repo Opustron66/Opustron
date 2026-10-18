@@ -263,7 +263,7 @@ def _build_header(doc: Document, roster: Roster | None) -> str:
     return "\n".join(lines)
 
 
-def render_for_llm(doc: Document, roster: Roster | None = None) -> str:
+def render_for_llm(doc: Document, roster: Roster | None = None, *, known_people: bool = True) -> str:
     """Build the text the LLM receives: optional header + cleaned body.
 
     Changes vs. raw document text:
@@ -287,7 +287,7 @@ def render_for_llm(doc: Document, roster: Roster | None = None) -> str:
         parts.append(header)
     parts.append(body)
 
-    if roster and roster.people:
+    if known_people and roster and roster.people:
         known = ", ".join(roster.people[:30])  # cap to avoid huge prompts
         parts.append(f"\nKnown people: {known}")
 

@@ -94,7 +94,7 @@ def test_cli_ingests_through_guard_and_logs_egress(guarded, monkeypatch):
     rc = cli.main(["--corpus", str(FIX), "--state", str(state), "--model", "m-test", "--timeout", "7"])
 
     assert rc == 0
-    assert made == {"default_model": "m-test", "timeout": 7.0, "max_tokens": 8192}
+    assert made == {"default_model": "m-test", "timeout": 7.0, "max_tokens": 8192, "thinking": False}
     assert {c["model"] for c in transport.calls} == {"m-test"}
     assert {c["max_tokens"] for c in transport.calls} == {8192}
     assert "Alice Chen" not in json.dumps(transport.calls)

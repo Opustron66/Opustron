@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from chronicle.ingest.pipeline import ingest_corpus, read_claims, run_ingest
+from chronicle.ingest.pipeline import DOCS_FILE, ingest_corpus, read_claims, read_docs, run_ingest
 from chronicle.schema import Document
 
 FIX = Path(__file__).parent.parent / "fixtures" / "corpus"
@@ -110,3 +110,17 @@ def test_closings_emitted_across_parts(tmp_path):
     closings = [c for c in claims if c.valid_to is not None]
     assert len(closings) >= 1
     assert any(c.subject.lower() in ("alice chen",) for c in closings)
+
+
+def test_docs_jsonl_written_once_per_doc_even_when_extraction_fails(tmp_path):
+    class Broken(FakeLLM):
+        def complete(self, messages, schema=None):
+            raise RuntimeError("truncated reply")
+
+    ingest_corpus(FIX, tmp_path, Broken())  # every extraction fails
+    ingest_corpus(FIX, tmp_path, FakeLLM())  # retry succeeds
+    docs = read_docs(tmp_path / DOCS_FILE)
+    assert len(docs) == 3 and len({d["doc_id"] for d in docs}) == 3
+    email = next(d for d in docs if d["doc_id"] == "E:2026-04-16T09-12-00__aaaa0001")
+    assert email["date"] and email["text"].strip()
+    assert "Known people:" not in email["text"]  # prompt hint, not document text
