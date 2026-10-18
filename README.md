@@ -169,6 +169,17 @@ observation dates and validity fields. The benchmark opens `state/memory.sqlite3
 and syncs P1's `state/claims.jsonl` on each question, then closes its connection.
 There is no separate raw-document SQLite ingestion path.
 
+P1 and P2 normalize literal email values to the `email` predicate rather than
+`status`; email addresses are values, not separate entities, and multiple contact
+addresses may coexist. Deadline placeholder aliases (`due`, `deadline`, `due date`)
+normalize to `due`. P1 emits the new date for rescheduling and discards a redundant
+closing-only dated claim when that same document contains a validated replacement
+for the same subject/predicate; P2 closes the old schedule at the replacement's
+observation date. Ownership endings and standalone closing claims remain intact.
+Re-ingest into a fresh state to apply this to previously processed documents:
+the extraction prompt/cache version changed, but existing done markers and stored
+facts are not rewritten. Baseline evaluation state and reports should be retained.
+
 ```powershell
 uv run python -m chronicle.ingest --corpus tests/fixtures/corpus/part_a --state .tmp/chronicle
 uv run python -m chronicle.ingest --corpus tests/fixtures/corpus/part_b --state .tmp/chronicle
