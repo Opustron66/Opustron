@@ -2,7 +2,7 @@
 
 The routes are the "P2 memory store endpoints" in ``ui/src/services/api.js``. ``router(...)``
 returns a FastAPI ``APIRouter`` so the reasoning (``/ask``) and egress (``/egress``) routes can be
-mounted on the same app; ``create_app`` serves the memory routes alone.
+mounted on the same app; ``create_app`` includes memory and reasoning routes.
 
     python -m chronicle.memory serve --state .tmp/chronicle --port 8000
 """
@@ -13,9 +13,35 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field, field_validator
+
+from chronicle.reason.pipeline import answer_question
+from chronicle.reason.planner import InvalidQueryDate
 
 from .api import CLAIMS_FILE, MemoryAPI
 from .models import parse_when
+
+
+class AskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=10000)
+    as_of: date | None = None
+
+    @field_validator("question")
+    @classmethod
+    def nonempty_question(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("question must not be blank")
+        return value.strip()
+
+
+class Citation(BaseModel):
+    doc_id: str
+
+
+class AskResponse(BaseModel):
+    answer: str
+    source_ids: list[str]
+    citations: list[Citation]
 
 
 class StateMemory:
@@ -50,6 +76,19 @@ def _when(value: str | None, name: str) -> date | datetime | None:
 def router(memory: MemoryAPI | StateMemory) -> APIRouter:
     get_api = memory.refresh if isinstance(memory, StateMemory) else (lambda: memory)
     routes = APIRouter()
+
+    @routes.post("/ask", response_model=AskResponse)
+    def ask(request: AskRequest) -> AskResponse:
+        api = get_api()
+        try:
+            result = answer_question(request.question, api, as_of=request.as_of)
+        except InvalidQueryDate as exc:
+            raise HTTPException(400, str(exc)) from None
+        except Exception:
+            # Provider failures can include credentials or corpus text. Keep them private.
+            raise HTTPException(502, "Unable to generate an answer. Check model configuration and try again.") from None
+        return AskResponse(answer=result.answer, source_ids=result.source_ids,
+                           citations=[Citation(doc_id=doc_id) for doc_id in result.source_ids])
 
     @routes.get("/entities")
     def entities() -> list[dict[str, Any]]:

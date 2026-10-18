@@ -29,11 +29,22 @@ test("sends the question with the as-of date", async () => {
   expect(JSON.parse(init.body)).toEqual({ question: "Who owned payments?", as_of: "2026-05-10" });
 });
 
-test("falls back to a scaffold reply when the backend is down", async () => {
+test("shows an error without invented facts or citations when the backend is down", async () => {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connection refused")));
   render(<ChatPanel asOf={asOf} />);
   await askQuestion("Who owned payments?");
-  expect(await screen.findByText(/Backend not connected/)).toBeInTheDocument();
+  expect(await screen.findByText(/Unable to get an answer/)).toBeInTheDocument();
+  expect(screen.queryByText(/Alice Chen owned/)).not.toBeInTheDocument();
+  expect(screen.queryByText("email_001")).not.toBeInTheDocument();
+});
+
+test("shows an error on a failed model response and permits another question", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 502 }));
+  render(<ChatPanel asOf={asOf} />);
+  await askQuestion("Who owned billing on June 9?");
+  expect(await screen.findByText(/Unable to get an answer/)).toBeInTheDocument();
+  expect(screen.queryByText("email_001")).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox")).toBeEnabled();
 });
 
 test("renders answer text as text, never as HTML", async () => {
