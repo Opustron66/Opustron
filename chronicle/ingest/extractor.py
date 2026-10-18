@@ -6,15 +6,16 @@ import threading
 from typing import Any, Protocol
 
 from chronicle.schema import Claim, Document, Entity, Event
+from chronicle.claim_normalization import DATED_PREDICATES, normalize_claim_value
 
 from .cache import DiskCache, cache_key
 from .temporal_normalizer import NormalizerConfig, resolve
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 PREDICATES = [
     "owns", "works_on", "works_at", "reports_to", "status", "deadline", "scheduled_for",
-    "located_in", "decided", "proposed", "completed", "blocked_by", "member_of", "role", "related_to",
+    "located_in", "decided", "proposed", "completed", "blocked_by", "member_of", "role", "email", "related_to",
 ]
 
 SYSTEM_PROMPT = f"""You extract atomic factual claims from one document.
@@ -29,6 +30,10 @@ Each claim: subject, predicate, object, valid_from, valid_to, quote, confidence 
   object = a short description of what is due or happening (NOT the date), and the date goes in
   valid_from. Example: "The migration is due next Friday" -> subject "migration", predicate
   "deadline", object "due", valid_from "next Friday", valid_to null.
+- Contact email: predicate email, object the exact email address. Never use status for an email address.
+- Use object "due" for deadlines and "scheduled" for scheduled events; keep the event description in subject.
+- A rescheduled deadline/event needs ONLY its new scheduled date. Do not emit a closing claim ending on the old due date: P2 supersedes the old schedule when this document states the new one.
+- An explicit event cancellation is a status claim with object "cancelled" and valid_from equal to its effective cancellation date, not a deadline ending on its old scheduled date.
 - Changes of ownership/role (takeovers, handovers, reassignments) need TWO claims:
   1. the NEW state: new person, predicate owns (or role/works_on), the thing, valid_from = the
      effective date ("today" if "effective today"), valid_to null;
@@ -125,6 +130,7 @@ class ClaimExtractor:
             raise ValueError(f"{doc.doc_id}: document has no date; refusing to stamp with ingestion time")
         haystack = _squash(doc.text)
         claims = []
+        replacements = set()
         for c in self._raw_claims(doc):
             quote = str(c.get("quote") or "").strip()
             if not all(c.get(k) for k in ("subject", "predicate", "object")) or _squash(quote) not in haystack or not quote:
@@ -136,13 +142,25 @@ class ClaimExtractor:
             conf = float(c.get("confidence") or 1.0)
             if c.get("valid_from") and start.start is None:
                 conf = min(conf, 0.4)
+            predicate, obj = normalize_claim_value(str(c["predicate"]), str(c["object"]))
+            if predicate in DATED_PREDICATES and start.start is not None:
+                replacements.add((_squash(str(c["subject"])), predicate))
             claims.append(Claim(
-                subject=str(c["subject"]).strip(), predicate=str(c["predicate"]).strip().lower(),
-                object=str(c["object"]).strip(), valid_from=start.start or (None if end.start else doc.doc_date),  # closing claim: start unknown
+                subject=str(c["subject"]).strip(), predicate=predicate,
+                object=obj, valid_from=start.start or (None if end.start else doc.doc_date),  # closing claim: start unknown
                 valid_to=end.start if end.start else None, observed_at=doc.doc_date,
                 doc_id=doc.doc_id, quote=quote, confidence=max(0.0, min(1.0, conf * min(start.confidence or 1, 1))),
             ))
-        return claims
+        result = []
+        for claim in claims:
+            if (claim.predicate in DATED_PREDICATES and claim.valid_from is None and claim.valid_to is not None
+                    and (_squash(claim.subject), claim.predicate) in replacements):
+                # A same-document replacement already closes the previous P2 schedule.
+                with self._lock:
+                    self.dropped += 1
+                continue
+            result.append(claim)
+        return result
 
 
 def extract_entities(event: Event) -> list[Entity]:

@@ -19,6 +19,7 @@ from typing import Any
 from uuid import uuid4
 
 from chronicle.schema import Claim
+from chronicle.claim_normalization import normalize_claim_value
 
 from .models import Fact, FactSource, from_ts, to_ts
 from .supersession import (
@@ -33,9 +34,9 @@ from .supersession import (
 MIGRATIONS = Path(__file__).parent / "migrations"
 
 # Predicates whose object is a value ("blocked", "due", "staff engineer"), not an entity.
-LITERAL_OBJECT = frozenset({"status", "deadline", "scheduled_for", "role", "title", "decided", "proposed", "completed"})
+LITERAL_OBJECT = frozenset({"status", "email", "deadline", "scheduled_for", "role", "title", "decided", "proposed", "completed"})
 # Predicates whose subject is a person.
-PERSON_SUBJECT = frozenset({"owns", "works_on", "works_at", "reports_to", "member_of", "role", "leads", "manages"})
+PERSON_SUBJECT = frozenset({"owns", "email", "works_on", "works_at", "reports_to", "member_of", "role", "leads", "manages"})
 
 _VERSION_FIELDS = ("valid_from", "valid_to", "superseded_by", "end_reason")
 
@@ -197,6 +198,7 @@ class MemoryDatabase:
             now = self.now()
             subject, obj = claim.subject.strip(), claim.object.strip()
             predicate = normalize_predicate(claim.predicate)
+            predicate, obj = normalize_claim_value(predicate, obj)
             s_key, o_key = normalize_key(subject), normalize_key(obj)
             dated = predicate in DATED and claim.valid_from is not None
             event_at = to_ts(claim.valid_from) if dated else None
