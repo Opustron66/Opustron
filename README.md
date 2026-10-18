@@ -268,6 +268,14 @@ generic 502 without provider details. The UI displays an error on failed request
 and never substitutes a sample corpus answer. Answer wording still depends on the
 configured model; retrieval does not guarantee answer accuracy.
 
+Answer evidence rules distinguish a plan from an outcome: a scheduled date does
+not establish completion, non-completion or cancellation, even when the date is
+in the past. Schedule-only evidence should produce "the corpus does not confirm
+whether it happened" rather than a definite yes/no. Explicit completed, cancelled
+or not-completed evidence can support a definite answer. These rules are appended
+even when an external benchmark supplies the answer-format contract; they remain
+model instructions, not an independent semantic verifier.
+
 **Live egress log.** In a second terminal, run:
 
 ```bash
