@@ -29,9 +29,11 @@ def test_retrieval_preserves_opening_and_closing_claims(tmp_path):
     assert len(evidence) == 1
     assert evidence[0].doc_id == "E:change"
     assert evidence[0].date == "2026-05-01"
-    assert [json.loads(line) for line in evidence[0].text.splitlines()] == [
-        c.model_dump(mode="json") for c in claims[:2]
-    ]
+    retrieved = {json.loads(line)["subject"]: json.loads(line) for line in evidence[0].text.splitlines()}
+    assert set(retrieved) == {"Alice", "Bob"}
+    assert retrieved["Alice"]["valid_to"] == "2026-05-01"
+    assert retrieved["Bob"]["valid_from"] == "2026-05-01"
+    assert all(c["quote"] == claims[0].quote for c in retrieved.values())
 
 
 def test_empty_claims_do_not_fall_back_to_legacy_store(tmp_path):

@@ -80,6 +80,36 @@ def _is_wrapped(schema: dict[str, Any]) -> bool:
     return "type" not in schema and "name" in schema and isinstance(schema.get("schema"), dict)
 
 
+def _cacheable_reply(raw: str, schema: dict[str, Any] | None) -> bool:
+    """Cache admission checks, not a replacement for the caller's schema validation."""
+    if not raw.strip():
+        return False
+    if schema is None:
+        return True
+    try:
+        value = parse_json_reply(raw)
+    except ValueError:
+        return False
+    spec = schema["schema"] if _is_wrapped(schema) else schema
+    types = {"object": dict, "array": list, "string": str, "boolean": bool,
+             "integer": int, "number": (int, float), "null": type(None)}
+
+    def matches(item, declared):
+        choices = declared if isinstance(declared, list) else [declared]
+        return any(kind in types and isinstance(item, types[kind])
+                   and not (kind in ("integer", "number") and isinstance(item, bool)) for kind in choices)
+
+    if "type" in spec and not matches(value, spec["type"]):
+        return False
+    if isinstance(value, dict):
+        if any(key not in value for key in spec.get("required", [])):
+            return False
+        for key, prop in spec.get("properties", {}).items():
+            if key in value and "type" in prop and not matches(value[key], prop["type"]):
+                return False
+    return True
+
+
 class LLMClient:
     """OpenAI-compatible client wired to Nebius Token Factory."""
 
@@ -169,22 +199,16 @@ class LLMClient:
         redacted_messages, mapping = router.redact_messages(messages)
 
         # Check cache
-        cache_key = self._cache_key(
-            redacted_messages, schema, model or self._default_model, max_tokens or self.max_tokens
-        )
-        if self._use_cache:
-            cached = self._load_cache(cache_key)
-            if cached is not None:
-                raw = cached
-                prompt_tokens = completion_tokens = 0
-            else:
-                raw, prompt_tokens, completion_tokens = self._call_api(
-                    redacted_messages, schema, model, temperature, max_tokens or self.max_tokens
-                )
-                self._save_cache(cache_key, raw)
+        budget = max_tokens or self.max_tokens
+        cache_key = self._cache_key(redacted_messages, schema, model or self._default_model,
+                                    max_tokens=budget, temperature=temperature)
+        cached = self._load_cache(cache_key) if self._use_cache else None
+        cache_hit = cached is not None and _cacheable_reply(cached, schema)
+        if cache_hit:
+            raw, prompt_tokens, completion_tokens, finish_reason = cached, 0, 0, None
         else:
-            raw, prompt_tokens, completion_tokens = self._call_api(
-                redacted_messages, schema, model, temperature, max_tokens or self.max_tokens
+            raw, prompt_tokens, completion_tokens, finish_reason = self._call_api(
+                redacted_messages, schema, model, temperature, budget
             )
 
         # Re-identify pseudonyms in the response
@@ -201,10 +225,16 @@ class LLMClient:
             request_preview=redacted_messages[-1]["content"][:200] if redacted_messages else "",
         )
 
-        if schema is not None and not _is_wrapped(schema):
-            return parse_json_reply(restored_raw)
-
-        return restored_raw
+        if finish_reason in ("length", "content_filter"):
+            raise ValueError(f"truncated reply (finish_reason={finish_reason}, max_tokens={budget})"
+                             " — raise CHRONICLE_MAX_TOKENS or set CHRONICLE_THINKING=false")
+        if not raw.strip():
+            raise ValueError("Model returned an empty response")
+        result = parse_json_reply(restored_raw) if schema is not None and not _is_wrapped(schema) else restored_raw
+        if self._use_cache and not cache_hit and _cacheable_reply(raw, schema):
+            # Persist pseudonymised text only, after parsing/admission checks succeed.
+            self._save_cache(cache_key, raw)
+        return result
 
     # ------------------------------------------------------------------
     # Internal
@@ -217,8 +247,8 @@ class LLMClient:
         model: str | None,
         temperature: float,
         max_tokens: int,
-    ) -> tuple[str, int, int]:
-        """Make the actual API call. Returns (content, prompt_tokens, completion_tokens)."""
+    ) -> tuple[str, int, int, str | None]:
+        """Return content, usage and finish reason so incomplete replies cannot be cached."""
         create = self._get_transport()
 
         kwargs: dict[str, Any] = {
@@ -247,17 +277,7 @@ class LLMClient:
         usage = resp.usage
         prompt_tokens = usage.prompt_tokens if usage else 0
         completion_tokens = usage.completion_tokens if usage else 0
-        finish_reason = getattr(choice, "finish_reason", None)
-        if not content or finish_reason == "length":
-            # A reasoning model that runs out of budget returns nothing, or a reply cut off
-            # mid-thought. Neither is an answer: raise so the cause is visible and nothing
-            # is cached (otherwise JSON fragments from the thinking get parsed as the reply).
-            what = "truncated reply" if content else "empty reply"
-            raise RuntimeError(
-                f"{what} (finish_reason={finish_reason}, {completion_tokens} completion tokens)"
-                " — raise CHRONICLE_MAX_TOKENS or set CHRONICLE_THINKING=false"
-            )
-        return content, prompt_tokens, completion_tokens
+        return content or "", prompt_tokens, completion_tokens, getattr(choice, "finish_reason", None)
 
     def _get_transport(self) -> Callable[..., Any]:
         with self._transport_lock:
@@ -280,10 +300,13 @@ class LLMClient:
         messages: list[dict[str, str]],
         schema: dict[str, Any] | None,
         model: str,
-        max_tokens: int,
+        *,
+        max_tokens: int | None = None,
+        temperature: float = 0.0,
     ) -> str:
-        # Every setting that changes the reply is in the key, so changing one never serves a stale reply.
-        payload = json.dumps({"messages": messages, "schema": schema, "model": model, "max_tokens": max_tokens,
+        payload = json.dumps({"version": 2, "messages": messages, "schema": schema, "model": model,
+                              "base_url": self._base_url.rstrip("/"),
+                              "max_tokens": max_tokens or self.max_tokens, "temperature": temperature,
                               "structured": self._structured, "thinking": self.thinking}, sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()
 

@@ -7,22 +7,26 @@ import pytest
 
 from chronicle.guard.egress_logger import EgressLogger
 from chronicle.integrations import tavily
-from chronicle.integrations.hermes_provider import (
-    ChronicleMemoryProvider,
-    InMemoryBackend,
-)
+from chronicle.integrations.hermes_provider import ChronicleMemoryProvider
 from chronicle.integrations.tavily import TavilyClient
+from chronicle.memory.backend import SQLiteBackend
 
 
 def _day(d: str) -> datetime:
     return datetime.fromisoformat(d).replace(tzinfo=UTC)
 
 
+@pytest.fixture(autouse=True)
+def no_shared_db(monkeypatch):
+    monkeypatch.delenv("CHRONICLE_MEMORY_DB", raising=False)
+
+
 @pytest.fixture
-def provider():
+def provider(tmp_path):
     p = ChronicleMemoryProvider(web=TavilyClient(api_key=""))
-    p.initialize("s1", hermes_home="/tmp/hermes-test")
-    return p
+    p.initialize("s1", hermes_home=str(tmp_path / "hermes"))
+    yield p
+    p.shutdown()
 
 
 def test_identity_and_tools(provider):
@@ -42,7 +46,7 @@ def test_remember_then_recall_via_tools(provider):
 
 
 def test_as_of_returns_fact_true_at_that_date():
-    backend = InMemoryBackend()
+    backend = SQLiteBackend(":memory:")
     old = backend.remember("Alice owns payments", source="test", occurred_at=_day("2026-05-01"))
     backend.remember("Bob owns payments", source="test", occurred_at=_day("2026-05-15"), supersedes=old)
 
@@ -93,9 +97,14 @@ def test_redaction_can_be_disabled(provider, monkeypatch):
     assert "alice@example.com" in provider.prefetch("alice email")
 
 
+def _wait_for_sync(provider):
+    if provider._sync_thread:
+        provider._sync_thread.join(timeout=5)
+
+
 def test_sync_turn_stores_user_message_only(provider):
     provider.sync_turn("Carol joined the platform team", "Noted, welcome Carol!")
-    provider.shutdown()
+    _wait_for_sync(provider)
     block = provider.prefetch("platform team")
     assert "Carol joined the platform team" in block
     assert "welcome" not in block
@@ -103,7 +112,7 @@ def test_sync_turn_stores_user_message_only(provider):
 
 def test_sync_turn_skips_trivial_prompts(provider):
     provider.sync_turn("/help", "Here are the commands")
-    provider.shutdown()
+    _wait_for_sync(provider)
     assert provider.prefetch("help commands") == ""
 
 
@@ -140,7 +149,7 @@ def web_provider(tmp_path, monkeypatch):
         return json.dumps({"results": [{"title": "Nebius", "url": "https://nebius.com", "content": "AI cloud", "score": 0.8}]}).encode()
 
     p = ChronicleMemoryProvider(web=TavilyClient("tvly-test", transport=transport))
-    p.initialize("s1")
+    p.initialize("s1", hermes_home=str(tmp_path / "hermes"))
     p.sent = sent
     return p
 
@@ -166,3 +175,47 @@ def test_web_search_tool_refuses_personal_data(web_provider):
 def test_web_search_without_key_reports_error(provider):
     out = json.loads(provider.handle_tool_call("chronicle_web_search", {"query": "Nebius"}))
     assert "TAVILY_API_KEY" in out["error"]
+
+
+def test_memory_survives_a_hermes_restart(tmp_path):
+    home = str(tmp_path / "hermes")
+    first = ChronicleMemoryProvider(web=TavilyClient(api_key=""))
+    first.initialize("s1", hermes_home=home)
+    first.handle_tool_call("chronicle_remember", {"content": "Dana leads the payments migration"})
+    first.shutdown()
+
+    second = ChronicleMemoryProvider(web=TavilyClient(api_key=""))
+    second.initialize("s2", hermes_home=home)
+    assert "Dana leads the payments migration" in second.prefetch("payments migration lead")
+    second.shutdown()
+    assert (tmp_path / "hermes" / "chronicle" / "memory.sqlite3").is_file()
+
+
+def test_each_hermes_profile_gets_its_own_memory(tmp_path):
+    work = ChronicleMemoryProvider(web=TavilyClient(api_key=""))
+    work.initialize("s1", hermes_home=str(tmp_path / "work"))
+    work.handle_tool_call("chronicle_remember", {"content": "Quarterly payments review is Friday"})
+    personal = ChronicleMemoryProvider(web=TavilyClient(api_key=""))
+    personal.initialize("s2", hermes_home=str(tmp_path / "personal"))
+    assert personal.prefetch("payments review") == ""
+    work.shutdown()
+    personal.shutdown()
+
+
+def test_chronicle_memory_db_env_shares_one_database(tmp_path, monkeypatch):
+    shared = tmp_path / "shared.sqlite3"
+    monkeypatch.setenv("CHRONICLE_MEMORY_DB", str(shared))
+    p = ChronicleMemoryProvider(web=TavilyClient(api_key=""))
+    p.initialize("s1", hermes_home=str(tmp_path / "hermes"))
+    p.handle_tool_call("chronicle_remember", {"content": "Bob owns the payments service"})
+    p.shutdown()
+    assert shared.is_file()
+    assert not (tmp_path / "hermes" / "chronicle").exists()
+
+
+def test_explicit_backend_is_not_closed_on_shutdown():
+    backend = SQLiteBackend(":memory:")
+    p = ChronicleMemoryProvider(backend=backend, web=TavilyClient(api_key=""))
+    p.initialize("s1", hermes_home="")
+    p.shutdown()
+    backend.remember("still usable", source="test")

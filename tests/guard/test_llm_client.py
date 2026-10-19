@@ -209,7 +209,7 @@ def test_chronicle_structured_default_sends_response_format(monkeypatch):
 def test_empty_or_truncated_reply_raises_and_is_not_cached(isolated_home, content):
     """A reply cut off by max_tokens is never parsed: fragments of the thinking are not an answer."""
     client = LLMClient(transport=lambda **kw: reply(content, completion_tokens=32768, finish_reason="length"))
-    with pytest.raises(RuntimeError, match="finish_reason=length"):
+    with pytest.raises(ValueError, match="finish_reason=length"):
         client.complete([{"role": "user", "content": "ingest this long doc"}], WRAPPED)
     assert list((isolated_home / "cache").glob("*.txt")) == []
 

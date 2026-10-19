@@ -7,18 +7,19 @@ from collections import Counter
 from typing import Any, Protocol
 
 from chronicle.schema import Claim, Document, Entity, Event
+from chronicle.claim_normalization import DATED_PREDICATES, normalize_claim_value
 
 from .cache import DiskCache, cache_key
 from .roster import Roster
 from .temporal_normalizer import NormalizerConfig, resolve
 
-PROMPT_VERSION = "v3"
+PROMPT_VERSION = "v4"
 
 # Controlled predicate vocabulary.  ``related_to`` is intentionally absent.
 PREDICATES = [
-    "owns", "role", "works_on", "member_of", "reports_to", "assigned_to",
+    "owns", "role", "works_on", "works_at", "member_of", "reports_to", "assigned_to",
     "status", "decided", "proposed", "completed", "requested",
-    "deadline", "scheduled_for", "located_in", "blocked_by",
+    "deadline", "scheduled_for", "located_in", "blocked_by", "email",
 ]
 # attr:<snake_key> is also valid (e.g. attr:budget, attr:p95_latency)
 _ATTR_RE = re.compile(r"^attr:[a-z0-9_]+$")
@@ -52,6 +53,10 @@ PREDICATE_SYNONYMS: dict[str, str] = {
     "refactored_to": "decided",
     "moved_to": "decided",
     "changed_to": "decided",
+    # contact details
+    "work_email": "email",
+    "contact_email": "email",
+    "email_address": "email",
 }
 
 # Subjects that look like code artefacts rather than entities
@@ -80,6 +85,13 @@ Each claim: subject, predicate, object, valid_from, valid_to, quote, confidence 
   object = short description of what is due, date goes in valid_from.
   Example: "migration due next Friday" -> subject "migration", predicate "deadline",
   object "due", valid_from "next Friday", valid_to null.
+  Use object "due" for deadlines and "scheduled" for scheduled events; keep the event
+  description in subject.
+- A rescheduled deadline/event needs ONLY its new date. Do not emit a closing claim ending
+  on the old date: the store supersedes the old schedule when this document states the new one.
+- An explicit cancellation is a status claim with object "cancelled" and valid_from = the
+  effective cancellation date, not a deadline ending on its old date.
+- Contact email: predicate email, object the exact address. Never use status for an email.
 - Changes of ownership/role/assignment need TWO claims:
   1. NEW state: new person, predicate (owns/role/assigned_to), the thing,
      valid_from = effective date, valid_to null.
@@ -330,6 +342,7 @@ class ClaimExtractor:
         rendered = render_for_llm(doc, self.roster)
         haystack = _squash(rendered)
         claims = []
+        replacements = set()
         for c in self._raw_claims(doc):
             if not all(c.get(k) for k in ("subject", "predicate", "object")):
                 with self._lock:
@@ -359,16 +372,28 @@ class ClaimExtractor:
             conf = float(c.get("confidence") or 1.0)
             if c.get("valid_from") and start.start is None:
                 conf = min(conf, 0.4)
+            predicate, obj = normalize_claim_value(pred, str(c["object"]))
+            if predicate in DATED_PREDICATES and start.start is not None:
+                replacements.add((_squash(subj), predicate))
             claims.append(Claim(
-                subject=subj, predicate=pred,
-                object=str(c["object"]).strip(),
-                valid_from=start.start or (None if end.start else doc.doc_date),
+                subject=subj, predicate=predicate,
+                object=obj,
+                valid_from=start.start or (None if end.start else doc.doc_date),  # closing claim: start unknown
                 valid_to=end.start if end.start else None,
                 observed_at=doc.doc_date,
                 doc_id=doc.doc_id, quote=quote,
                 confidence=max(0.0, min(1.0, conf * min(start.confidence or 1, 1))),
             ))
-        return claims
+        result = []
+        for claim in claims:
+            if (claim.predicate in DATED_PREDICATES and claim.valid_from is None and claim.valid_to is not None
+                    and (_squash(claim.subject), claim.predicate) in replacements):
+                # A same-document replacement already closes the previous P2 schedule.
+                with self._lock:
+                    self.dropped["redundant_closing"] += 1
+                continue
+            result.append(claim)
+        return result
 
     @property
     def dropped_total(self) -> int:

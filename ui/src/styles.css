@@ -33,7 +33,9 @@ body {
 .app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  /* Fixed to the window so long entity lists scroll inside the sidebar. */
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* ── Header ──────────────────────────────────────────────────────────────── */
@@ -58,6 +60,16 @@ body {
   font-family: var(--mono);
   font-size: 11px;
 }
+.app-corpus-label.source-live,
+.app-corpus-label.source-empty { color: var(--green); border-color: rgba(74,222,128,0.35); }
+.app-corpus-label.source-sample { color: var(--text-muted); }
+.app-empty {
+  flex: 1;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-dim);
+}
+.app-empty code { font-family: var(--mono); color: var(--text); }
 
 /* ── Timeline section ─────────────────────────────────────────────────────── */
 .app-timeline-section {
@@ -396,6 +408,16 @@ body {
 }
 .egress-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 .egress-subtitle { font-size: 11px; color: var(--text-muted); }
+.egress-status {
+  font-size: 10px;
+  font-family: var(--mono);
+  border-radius: 3px;
+  padding: 1px 6px;
+  text-transform: uppercase;
+}
+.egress-status.live { color: var(--green); background: rgba(74,222,128,0.12); }
+.egress-status.sample { color: var(--text-muted); background: var(--bg-card); border: 1px solid var(--border); }
+.egress-status.offline { color: var(--amber); background: rgba(251,191,36,0.12); }
 
 .egress-entries {
   overflow-y: auto;
