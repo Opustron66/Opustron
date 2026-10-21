@@ -173,15 +173,56 @@ def retrieve_memory(plan: QueryPlan, memory: MemoryAPI, top_k: int = CLAIM_K,
     return fuse(channels)
 
 
-def retrieve(plan: QueryPlan, state: str | Path | MemoryAPI, top_k: int = CLAIM_K) -> list[Evidence]:
-    """Search an existing memory or sync/open/close the adapter's persistent state."""
-    if isinstance(state, MemoryAPI):
-        return retrieve_memory(plan, state, top_k)
+SEARCH_BUDGET = 10_000
+
+
+def search_more(plan: QueryPlan, memory: MemoryAPI, queries: list[str], state: Path | None = None) -> list[Evidence]:
+    """The agentic answerer's ``search`` tool: the same channels and time routing as the first
+    retrieval, for new keyword queries, in a smaller budget."""
+    if state is None and memory.database.path != ":memory:":
+        state = Path(memory.database.path).parent
+    chunks = load_chunks(state)
+    channels = []
+    for query in queries:
+        sub = QueryPlan(question=query, kind=plan.kind, reference_date=plan.reference_date)
+        channels += [retrieve_pages(sub, memory, "topic", 3), retrieve_claims(sub, memory, 10),
+                     retrieve_chunks(sub, chunks, 6)]
+    return fuse(channels, budget=SEARCH_BUDGET)
+
+
+def open_documents(plan: QueryPlan, memory: MemoryAPI, doc_ids: list[str], state: Path | None = None) -> list[Evidence]:
+    """The ``open`` tool: full text of named documents (written by the as-of date, if any)."""
+    if state is None and memory.database.path != ":memory:":
+        state = Path(memory.database.path).parent
+    path = state / DOCS_FILE if state is not None else None
+    if path is None or not path.is_file():
+        return []
+    ref = _as_of(plan)
+    wanted = set(doc_ids)
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if row["doc_id"] in wanted and (ref is None or (row.get("date") or "") <= ref.isoformat()):
+            out.append(Evidence(row["doc_id"], row["text"], row.get("date") or "", 0.0, kind="chunk"))
+    return out
+
+
+def open_state(state: str | Path) -> MemoryAPI:
+    """Sync and open the adapter's persistent state (the caller closes it)."""
     state = Path(state)
     if not (state / CLAIMS_FILE).is_file() and not (state / DB_FILE).is_file():
         raise FileNotFoundError(
             f"Ingest corpus with python -m chronicle.ingest before answering: {state / CLAIMS_FILE}. "
             "Legacy chronicle_adapter.sqlite3 state must be re-ingested."
         )
-    with MemoryAPI.from_state(state) as memory:
-        return retrieve_memory(plan, memory, top_k, state=state)
+    return MemoryAPI.from_state(state)
+
+
+def retrieve(plan: QueryPlan, state: str | Path | MemoryAPI, top_k: int = CLAIM_K) -> list[Evidence]:
+    """Search an existing memory or sync/open/close the adapter's persistent state."""
+    if isinstance(state, MemoryAPI):
+        return retrieve_memory(plan, state, top_k)
+    with open_state(state) as memory:
+        return retrieve_memory(plan, memory, top_k, state=Path(state))

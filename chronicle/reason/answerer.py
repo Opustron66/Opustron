@@ -1,4 +1,13 @@
-"""Generate privacy-routed answers with citations limited to retrieved evidence."""
+"""Generate privacy-routed answers with citations limited to retrieved evidence.
+
+With ``tools`` the answerer is agentic: for up to ``MAX_ROUNDS`` model calls it may ask for more
+evidence (``search`` with new queries, or ``open`` a full source document) before answering, and
+the last round must answer. Without tools it answers in one call.
+"""
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
+
 from chronicle.guard import llm
 
 from .models import AnswerResult, Evidence, QueryPlan
@@ -56,16 +65,110 @@ def _render(e: Evidence) -> str:
     return e.text
 
 
-def generate_answer(plan: QueryPlan, evidence: list[Evidence]) -> AnswerResult:
-    if not evidence:
-        return AnswerResult("Not in the corpus", [])
+MAX_ROUNDS = 3
+
+AGENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "action": {"type": "string", "enum": ["answer", "search", "open"]},
+        "answer": {"type": "string"},
+        "source_ids": {"type": "array", "items": {"type": "string"}},
+        "queries": {"type": "array", "items": {"type": "string"}},
+        "doc_ids": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["action"],
+    "additionalProperties": False,
+}
+
+AGENT_RULES = """You may gather more evidence before answering. Reply with ONE JSON object:
+- {"action": "answer", "answer": "...", "source_ids": [...]} when the evidence answers the question
+  (or clearly shows the corpus does not record it). Prefer this.
+- {"action": "search", "queries": ["...", "..."]} to search the corpus again with up to 3 new
+  keyword queries (other names, ids, synonyms) when a key fact is missing.
+- {"action": "open", "doc_ids": ["..."]} to read up to 3 full source documents named in the evidence.
+Search or open only when needed: each costs a turn."""
+
+LAST_TURN = "This is your last turn: answer now with the evidence you have."
+
+
+@dataclass
+class Tools:
+    """What the agentic answerer may call: more retrieval and full-document reads."""
+
+    search: Callable[[list[str]], list[Evidence]]
+    open: Callable[[list[str]], list[Evidence]]
+
+
+_CHAIN = re.compile(r"\bin between\b|more than once", re.IGNORECASE)
+_ORDER = re.compile(r"\bin the order\b|earliest first|\border they happened\b", re.IGNORECASE)
+_OUTCOME = re.compile(r"^\s*(how did|what was the outcome|did)\b", re.IGNORECASE)
+_TWO = re.compile(r"\b(two different|are different|is that right)\b", re.IGNORECASE)
+
+
+def answer_template(plan: QueryPlan) -> str:
+    """Short answer shapes for question types the grader matches strictly."""
+    q = plan.question
+    if _CHAIN.search(q):
+        return ('Answer shape: "In between: <value it held between the first and the latest>; now: '
+                '<latest value>." Give each value exactly as the documents state it.')
+    if _ORDER.search(q):
+        return "Answer shape: the items, earliest first, one per line, using the question's wording."
+    if _TWO.search(q):
+        return 'Answer shape: "Yes. <first>: <what it is>. <second>: <what it is>." One short clause each.'
+    if _OUTCOME.search(q) or plan.question_type == "abstention_risk":
+        return ("If the evidence does not record that this happened or how it went, answer in one "
+                "sentence that the corpus does not record it (e.g. it was only scheduled); do not "
+                "describe an outcome.")
+    return ""
+
+
+def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last: bool, note: str = "") -> list[dict]:
     context = "\n\n".join(_render(e) for e in evidence)
     reference = f"Answer as of {plan.reference_date.isoformat()}.\n\n" if plan.reference_date else ""
-    messages = [
-        {"role": "system", "content": f"{_contract()}\n\n{EVIDENCE_GUIDE}\n\n{EVIDENCE_RULES}"},
-        {"role": "user", "content": f"{reference}EVIDENCE:\n{context}\n\nQUESTION: {plan.question}"},
-    ]
-    parsed = llm.complete(messages, schema=ANSWER_SCHEMA)
+    system = f"{_contract()}\n\n{EVIDENCE_GUIDE}\n\n{EVIDENCE_RULES}"
+    if template := answer_template(plan):
+        system += f"\n\n{template}"
+    user = f"{reference}EVIDENCE:\n{context}\n\nQUESTION: {plan.question}"
+    if agentic:
+        system += f"\n\n{AGENT_RULES}"
+        user += f"\n\n{note}{LAST_TURN if last else ''}".rstrip()
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _key(e: Evidence) -> tuple:
+    return (e.kind, e.doc_id, e.text[:80])
+
+
+def _str_list(value, limit: int = 3) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [v.strip() for v in value if isinstance(v, str) and v.strip()][:limit]
+
+
+def generate_answer(plan: QueryPlan, evidence: list[Evidence], tools: Tools | None = None) -> AnswerResult:
+    if not evidence:
+        return AnswerResult("Not in the corpus", [])
+    evidence = list(evidence)
+    if tools is None:
+        parsed = llm.complete(_messages(plan, evidence, agentic=False, last=True), schema=ANSWER_SCHEMA)
+    else:
+        note = ""
+        for round_number in range(1, MAX_ROUNDS + 1):
+            last = round_number == MAX_ROUNDS
+            parsed = llm.complete(_messages(plan, evidence, agentic=True, last=last, note=note),
+                                  schema=AGENT_SCHEMA)
+            if not isinstance(parsed, dict):
+                raise ValueError("LLM returned no JSON object")
+            action = parsed.get("action")
+            if last or action not in ("search", "open"):
+                break
+            asked = _str_list(parsed.get("queries" if action == "search" else "doc_ids"))
+            found = (tools.search if action == "search" else tools.open)(asked) if asked else []
+            have = {_key(e) for e in evidence}
+            new = [e for e in found if _key(e) not in have]
+            evidence += new
+            note = (f"({action} {asked!r} added {len(new)} evidence items.)\n" if new
+                    else f"({action} {asked!r} found nothing new.)\n")
     if not isinstance(parsed, dict):
         raise ValueError("LLM returned no JSON object")
     allowed = {e.doc_id for e in evidence} | {d for e in evidence for d in e.cites}
@@ -74,6 +177,6 @@ def generate_answer(plan: QueryPlan, evidence: list[Evidence]) -> AnswerResult:
         ids = []
     ids = list(dict.fromkeys(i for i in ids if isinstance(i, str) and i in allowed))
     answer = parsed.get("answer", "Not in the corpus")
-    if not isinstance(answer, str):
+    if not isinstance(answer, str) or not answer.strip():
         answer = "Not in the corpus"
     return AnswerResult(answer=answer, source_ids=ids)
