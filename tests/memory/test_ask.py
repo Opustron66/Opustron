@@ -30,9 +30,9 @@ def memory():
 def test_ask_filters_evidence_and_returns_real_citations(memory, question, day, owner, source):
     def complete(messages, schema):
         prompt = messages[1]["content"]
-        assert f'"subject": "{owner}"' in prompt
+        assert f'): {owner} owns' in prompt
         other = "Noah Williams" if owner == "Maya Patel" else "Maya Patel"
-        assert f'"subject": "{other}"' not in prompt
+        assert f'): {other} owns' not in prompt
         assert "Answer as of 2026-06-" in prompt
         return {"answer": owner, "source_ids": [source, "invented", source]}
 

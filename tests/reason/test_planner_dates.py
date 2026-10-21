@@ -32,3 +32,24 @@ def test_history_does_not_drop_old_owner():
 def test_invalid_date_is_explicit_error():
     with pytest.raises(InvalidQueryDate):
         plan_query("Who owned billing on June 31?", as_of=date(2026, 6, 20))
+
+
+def test_understanding_adds_terms_and_never_raises(monkeypatch):
+    from chronicle.reason.planner import understand
+    monkeypatch.setenv("CHRONICLE_QUERY_LLM", "on")
+
+    class LLM:
+        def __init__(self, reply):
+            self.reply = reply
+
+        def complete(self, messages, schema=None):
+            if isinstance(self.reply, Exception):
+                raise self.reply
+            return self.reply
+
+    plan = understand(plan_query("Camden pour window moved more than once"), LLM(
+        {"entities": ["Camden Row"], "aliases": ["camden"], "search_terms": ["pour", "slab"],
+         "question_type": "history"}))
+    assert plan.terms == ["Camden Row", "camden", "pour", "slab"] and plan.kind == "ordering_or_history"
+    failed = understand(plan_query("Who owns billing?"), LLM(ValueError("no JSON")))
+    assert failed.terms == [] and failed.kind == "search"

@@ -9,6 +9,7 @@ owned payments before Dana?" need them; pass ``as_of`` to see only what held on 
 import math
 import re
 from collections import Counter
+from dataclasses import dataclass
 from datetime import date, datetime
 
 from .database import MemoryDatabase
@@ -45,26 +46,83 @@ def fact_text(fact: Fact) -> str:
     return " ".join(p for p in parts if p)
 
 
-def rank(facts: list[Fact], query: str, *, k: int = 10) -> list[SearchHit]:
+def bm25(texts: list[str], query: str) -> list[float]:
+    """BM25 score of each text for ``query`` (0 where no term matches)."""
     terms = set(tokens(query))
-    if not terms or not facts:
-        return []
-    docs = [Counter(tokens(fact_text(f))) for f in facts]
+    if not terms or not texts:
+        return [0.0] * len(texts)
+    docs = [Counter(tokens(t)) for t in texts]
     avg_len = sum(sum(d.values()) for d in docs) / len(docs) or 1.0
     df = Counter(t for d in docs for t in terms if t in d)
     n = len(docs)
-    hits = []
-    for fact, doc in zip(facts, docs, strict=True):
+    scores = []
+    for doc in docs:
         length = sum(doc.values())
         score = 0.0
         for term in terms & doc.keys():
             idf = math.log(1 + (n - df[term] + 0.5) / (df[term] + 0.5))
             tf = doc[term]
             score += idf * tf * (K1 + 1) / (tf + K1 * (1 - B + B * length / avg_len))
-        if score > 0:
-            hits.append(SearchHit(fact, score))
+        scores.append(score)
+    return scores
+
+
+def rank(facts: list[Fact], query: str, *, k: int = 10) -> list[SearchHit]:
+    hits = [SearchHit(fact, score) for fact, score in zip(facts, bm25([fact_text(f) for f in facts], query),
+                                                          strict=True) if score > 0]
     hits.sort(key=lambda h: (h.score, to_ts(h.fact.valid_from) or ""), reverse=True)
     return hits[:k]
+
+
+@dataclass(slots=True)
+class Chunk:
+    """A piece of a source document (most corpus documents fit in one)."""
+
+    doc_id: str
+    date: str | None
+    text: str
+
+
+CHUNK_CHARS = 1600
+
+
+def chunk_documents(rows: list[dict], max_chars: int = CHUNK_CHARS) -> list[Chunk]:
+    """Split ``docs.jsonl`` rows into chunks of whole lines; every chunk of a document repeats
+    its header line (Subject/Channel) so it can be matched on its own."""
+    chunks = []
+    for row in rows:
+        text = row.get("text") or ""
+        if len(text) <= max_chars:
+            chunks.append(Chunk(row["doc_id"], row.get("date"), text))
+            continue
+        lines = text.splitlines()
+        header, piece = lines[0], []
+        for line in lines[1:]:
+            if piece and sum(len(x) + 1 for x in piece) + len(line) > max_chars:
+                chunks.append(Chunk(row["doc_id"], row.get("date"), "\n".join([header, *piece])))
+                piece = []
+            piece.append(line)
+        if piece:
+            chunks.append(Chunk(row["doc_id"], row.get("date"), "\n".join([header, *piece])))
+    return chunks
+
+
+def rank_chunks(chunks: list[Chunk], query: str, *, k: int = 10,
+                until: date | None = None) -> list[tuple[Chunk, float]]:
+    """BM25 over document chunks; ``until`` keeps only documents written on or before that day."""
+    pool = [c for c in chunks if until is None or (c.date or "") <= until.isoformat()]
+    scored = [(c, s) for c, s in zip(pool, bm25([c.text for c in pool], query), strict=True) if s > 0]
+    scored.sort(key=lambda cs: (cs[1], cs[0].date or ""), reverse=True)
+    return scored[:k]
+
+
+def rrf(rankings: list[list[str]], *, k: int = 60) -> dict[str, float]:
+    """Reciprocal rank fusion: each key scores sum(1 / (k + rank)) over the rankings it is in."""
+    fused: dict[str, float] = {}
+    for ranking in rankings:
+        for position, key in enumerate(ranking, start=1):
+            fused[key] = fused.get(key, 0.0) + 1.0 / (k + position)
+    return fused
 
 
 def search(db: MemoryDatabase, query: str, *, as_of: date | datetime | str | None = None,

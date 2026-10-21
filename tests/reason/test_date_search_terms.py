@@ -40,7 +40,7 @@ def test_date_filter_and_original_question_still_reach_answerer():
             answer_question(question, memory, as_of=date(2026, 6, 20))
         prompt = model.call_args.args[0][1]["content"]
         assert question in prompt and "Answer as of 2026-06-09" in prompt
-        assert '"subject": "Maya"' in prompt and '"subject": "Noah"' not in prompt
+        assert '): Maya ' in prompt and '): Noah ' not in prompt
 
 
 def test_history_keeps_comparison_words_and_owners():

@@ -37,12 +37,23 @@ def _contract() -> str:
     except ImportError:
         return FALLBACK_CONTRACT
 
+EVIDENCE_GUIDE = """How to read the evidence:
+- TOPIC blocks are timelines of one tracked value, oldest statement first; each line gives the
+  date it was stated, the source document and a verbatim quote. LATEST is the most recent statement.
+- FACT lines give a fact's validity interval (valid FROM -> TO; "now" = still true) and the date
+  it was stated.
+- DOCUMENT blocks are raw source text; prefer them when they disagree with a FACT or TOPIC.
+- Cite the document ids (the [...] ids) that support your answer."""
+
+
 def _render(e: Evidence) -> str:
     if e.kind == "topic":
-        return f"[timeline, latest statement {e.date}]\n{e.text}"
+        return e.text
     if e.kind == "entity":
-        return f"[person page]\n{e.text}"
-    return f"[{e.doc_id}] date={e.date}\n{e.text}"
+        return f"PERSON PAGE\n{e.text}"
+    if e.kind == "chunk":
+        return f"DOCUMENT [{e.doc_id}] written {e.date}\n{e.text}"
+    return e.text
 
 
 def generate_answer(plan: QueryPlan, evidence: list[Evidence]) -> AnswerResult:
@@ -51,7 +62,7 @@ def generate_answer(plan: QueryPlan, evidence: list[Evidence]) -> AnswerResult:
     context = "\n\n".join(_render(e) for e in evidence)
     reference = f"Answer as of {plan.reference_date.isoformat()}.\n\n" if plan.reference_date else ""
     messages = [
-        {"role": "system", "content": f"{_contract()}\n\n{EVIDENCE_RULES}"},
+        {"role": "system", "content": f"{_contract()}\n\n{EVIDENCE_GUIDE}\n\n{EVIDENCE_RULES}"},
         {"role": "user", "content": f"{reference}EVIDENCE:\n{context}\n\nQUESTION: {plan.question}"},
     ]
     parsed = llm.complete(messages, schema=ANSWER_SCHEMA)

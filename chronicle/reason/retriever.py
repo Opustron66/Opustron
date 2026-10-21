@@ -1,17 +1,34 @@
-"""Shared P2 temporal retrieval for UI chat and the benchmark adapter."""
+"""Shared P2 temporal retrieval for UI chat and the benchmark adapter.
+
+Hybrid and time-aware: four channels are searched and fused with reciprocal rank fusion,
+then packed into a character budget.
+
+* claims: BM25 over P2's facts (``kind="claim"``), one evidence item per source document;
+* topics: P1's consolidated timelines (``kind="topic"``), cut at the as-of date;
+* entities: P1's person pages;
+* documents: BM25 over the raw text of ``docs.jsonl``, so a value the extractor missed is
+  still found.
+
+Routing by question kind: an as-of question only sees facts true then, statements made by then,
+and documents written by then. History and ordering questions see everything, timelines first.
+"""
 import json
 import re
 from datetime import date
+from functools import lru_cache
 from pathlib import Path
 
 from chronicle.memory import MemoryAPI
 from chronicle.memory.api import CLAIMS_FILE, DB_FILE
+from chronicle.memory.search import Chunk, chunk_documents, rank_chunks, rrf
 
 from .models import Evidence, QueryPlan
 from .planner import lexical_query
 
-
-TOPIC_K, ENTITY_K = 4, 2
+DOCS_FILE = "docs.jsonl"
+CLAIM_K, TOPIC_K, ENTITY_K, CHUNK_K = 25, 6, 2, 12
+# About 7k tokens of evidence.
+CHAR_BUDGET = 28_000
 _ENTRY = re.compile(r"^- (\d{4}-\d{2}-\d{2}) \[[^\]]+\]: (.*?)(?: \(effective [^)]*\))? \| ")
 
 
@@ -36,12 +53,21 @@ def page_as_of(content: str, reference: date | None) -> str:
     return "\n".join(kept)
 
 
+def search_query(plan: QueryPlan) -> str:
+    return " ".join([lexical_query(plan.question), *plan.terms])
+
+
+def _as_of(plan: QueryPlan) -> date | None:
+    return plan.reference_date if plan.kind == "as_of" else None
+
+
 def retrieve_pages(plan: QueryPlan, memory: MemoryAPI, kind: str, k: int) -> list[Evidence]:
     """Topic timelines or entity pages from P1's consolidation, as one evidence item each."""
     out = []
-    for hit in memory.search(lexical_query(plan.question), as_of=plan.reference_date, k=k, kind=kind):
+    ref = _as_of(plan)
+    for hit in memory.search(search_query(plan), as_of=ref, k=k, kind=kind):
         fact = hit.fact
-        text = page_as_of(fact.content, plan.reference_date) if kind == "topic" else fact.content
+        text = page_as_of(fact.content, ref) if kind == "topic" else fact.content
         if not text:
             continue
         cites = list(dict.fromkeys(s.doc_id for s in fact.sources))
@@ -51,32 +77,103 @@ def retrieve_pages(plan: QueryPlan, memory: MemoryAPI, kind: str, k: int) -> lis
     return out
 
 
-def retrieve_memory(plan: QueryPlan, memory: MemoryAPI, top_k: int = 8) -> list[Evidence]:
-    """Use P2's temporal search, retaining each source citation."""
-    pages = retrieve_pages(plan, memory, "topic", TOPIC_K) + retrieve_pages(plan, memory, "entity", ENTITY_K)
-    return pages + retrieve_claims(plan, memory, top_k)
+def _day(value) -> str:
+    return value.isoformat()[:10] if value is not None else ""
 
 
-def retrieve_claims(plan: QueryPlan, memory: MemoryAPI, top_k: int = 8) -> list[Evidence]:
+def fact_line(claim: dict, doc_id: str) -> str:
+    """Zep-style: the fact with its validity interval, so the model sees when it held."""
+    start = claim.get("valid_from") or "?"
+    end = claim.get("valid_to") or "now"
+    stated = claim.get("observed_at") or "?"
+    predicate = claim["predicate"].replace("_", " ")
+    return (f"FACT [{doc_id}] (valid {start} -> {end}; stated {stated}): "
+            f"{claim['subject']} {predicate} {claim['object']} | \"{claim['quote']}\"")
+
+
+def retrieve_claims(plan: QueryPlan, memory: MemoryAPI, top_k: int = CLAIM_K) -> list[Evidence]:
+    """P2's temporal search; each source document becomes one evidence item of FACT lines.
+    For as-of questions, statements made after the reference date are left out too."""
+    ref = _as_of(plan)
     results: dict[str, Evidence] = {}
-    for hit in memory.search(lexical_query(plan.question), as_of=plan.reference_date, k=top_k, kind="claim"):
+    for hit in memory.search(search_query(plan), as_of=ref, k=top_k, kind="claim"):
         fact = hit.fact
         for source in fact.sources:
+            if ref is not None and source.observed_at is not None and _day(source.observed_at) > ref.isoformat():
+                continue
             claim = fact.to_claim().model_dump(mode="json")
-            claim.update(doc_id=source.doc_id, quote=source.quote,
-                         observed_at=source.observed_at.isoformat() if source.observed_at else None)
-            content = json.dumps(claim)
-            observed = claim["observed_at"] or ""
+            claim.update(quote=source.quote, observed_at=_day(source.observed_at) or None)
+            line = fact_line(claim, source.doc_id)
             if source.doc_id in results:
                 evidence = results[source.doc_id]
-                evidence.text += "\n" + content
+                if line not in evidence.text:
+                    evidence.text += "\n" + line
                 evidence.score = max(evidence.score, hit.score)
             else:
-                results[source.doc_id] = Evidence(source.doc_id, content, observed, hit.score)
-    return sorted(results.values(), key=lambda e: e.score, reverse=True)[:top_k]
+                results[source.doc_id] = Evidence(source.doc_id, line, claim["observed_at"] or "", hit.score)
+    return sorted(results.values(), key=lambda e: e.score, reverse=True)
 
 
-def retrieve(plan: QueryPlan, state: str | Path | MemoryAPI, top_k: int = 8) -> list[Evidence]:
+@lru_cache(maxsize=4)
+def _chunks(path: str, mtime: float) -> tuple[Chunk, ...]:
+    rows = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+    return tuple(chunk_documents(rows))
+
+
+def load_chunks(state: Path | None) -> list[Chunk]:
+    if state is None:
+        return []
+    path = state / DOCS_FILE
+    if not path.is_file():
+        return []
+    return list(_chunks(str(path), path.stat().st_mtime))
+
+
+def retrieve_chunks(plan: QueryPlan, chunks: list[Chunk], k: int = CHUNK_K) -> list[Evidence]:
+    return [Evidence(c.doc_id, c.text, c.date or "", score, kind="chunk")
+            for c, score in rank_chunks(chunks, search_query(plan), k=k, until=_as_of(plan))]
+
+
+def _key(e: Evidence) -> str:
+    return f"{e.kind}|{e.doc_id}|{e.text[:80]}"
+
+
+SECTION_ORDER = {"topic": 0, "entity": 1, "claim": 2, "chunk": 3}
+
+
+def fuse(channels: list[list[Evidence]], budget: int = CHAR_BUDGET) -> list[Evidence]:
+    """RRF over the channels, keep the best items that fit ``budget`` characters, then order
+    them by section (timelines, person pages, facts, document excerpts) and fused score."""
+    items: dict[str, Evidence] = {}
+    for channel in channels:
+        for e in channel:
+            items.setdefault(_key(e), e)
+    fused = rrf([[_key(e) for e in channel] for channel in channels])
+    chosen, used = [], 0
+    for key in sorted(fused, key=fused.get, reverse=True):
+        e = items[key]
+        if used + len(e.text) > budget:
+            continue
+        chosen.append(e)
+        used += len(e.text)
+        e.score = fused[key]
+    return sorted(chosen, key=lambda e: (SECTION_ORDER.get(e.kind, 9), -e.score))
+
+
+def retrieve_memory(plan: QueryPlan, memory: MemoryAPI, top_k: int = CLAIM_K,
+                    state: Path | None = None) -> list[Evidence]:
+    if state is None and memory.database.path != ":memory:":
+        state = Path(memory.database.path).parent
+    channels = [
+        retrieve_pages(plan, memory, "topic", TOPIC_K),
+        retrieve_pages(plan, memory, "entity", ENTITY_K),
+        retrieve_claims(plan, memory, top_k),
+        retrieve_chunks(plan, load_chunks(state)),
+    ]
+    return fuse(channels)
+
+
+def retrieve(plan: QueryPlan, state: str | Path | MemoryAPI, top_k: int = CLAIM_K) -> list[Evidence]:
     """Search an existing memory or sync/open/close the adapter's persistent state."""
     if isinstance(state, MemoryAPI):
         return retrieve_memory(plan, state, top_k)
@@ -87,4 +184,4 @@ def retrieve(plan: QueryPlan, state: str | Path | MemoryAPI, top_k: int = 8) -> 
             "Legacy chronicle_adapter.sqlite3 state must be re-ingested."
         )
     with MemoryAPI.from_state(state) as memory:
-        return retrieve_memory(plan, memory, top_k)
+        return retrieve_memory(plan, memory, top_k, state=state)

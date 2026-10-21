@@ -36,7 +36,8 @@ def test_ingest_twice_and_retrieve(tmp_path):
     assert not (state / "chronicle_adapter.sqlite3").exists()
     evidence = retrieve(plan_query("Who managed payments?"), state)
     assert {e.doc_id for e in evidence} == {"E:one", "E:two"}
-    assert all(json.loads(e.text)["quote"] for e in evidence)
+    assert all(e.text.startswith("FACT [") and "| \"" in e.text for e in evidence if e.kind == "claim")
+    assert {e.doc_id for e in evidence if e.kind == "chunk"} == {"E:one", "E:two"}
 
 def test_answer_jsonl_shape(tmp_path):
     inp = io.StringIO('{"id":"q1","question":"unknown"}\n')

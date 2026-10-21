@@ -44,9 +44,9 @@ def test_jsonl_and_ui_send_identical_temporal_evidence(tmp_path, claims, questio
 
     def complete(messages, schema):
         prompts.append(messages)
-        assert f'"subject": "{owner}"' in messages[1]["content"]
+        assert f'): {owner} owns' in messages[1]["content"]
         other = "Noah Williams" if owner == "Maya Patel" else "Maya Patel"
-        assert f'"subject": "{other}"' not in messages[1]["content"]
+        assert f'): {other} owns' not in messages[1]["content"]
         return {"answer": owner, "source_ids": [source, "invented"]}
 
     with patch("chronicle.reason.answerer.llm.complete", side_effect=complete):
