@@ -139,3 +139,36 @@ def test_assigned_to_change():
     closings = idx.reconcile([_claim("Dana Lee", "assigned_to", "ticket 42",
                                      vf=date(2026, 5, 1), doc_id="d2")])
     assert len(closings) == 1 and closings[0].subject == "Alice Chen"
+
+
+# ---------------------------------------------------------------------------
+# Out-of-order documents never produce inverted intervals
+# ---------------------------------------------------------------------------
+
+def test_older_fact_processed_later_does_not_close_newer():
+    # An August status is indexed first; a July doc arrives afterwards.
+    idx = ReconcileIndex()
+    august = _claim("camden row", "status", "current fire plan", vf=date(2027, 8, 22),
+                    observed=date(2027, 8, 22), doc_id="aug")
+    assert idx.reconcile([august]) == []
+
+    july = _claim("camden row", "status", "carrying 6% contingency", vf=date(2027, 7, 23),
+                  observed=date(2027, 7, 23), doc_id="jul")
+    assert idx.reconcile([july]) == []
+
+    # The August fact is still the open one: a September change closes it, not the July one.
+    september = _claim("camden row", "status", "handed over", vf=date(2027, 9, 1),
+                       observed=date(2027, 9, 1), doc_id="sep")
+    [closing] = idx.reconcile([september])
+    assert closing.object == "current fire plan"
+    assert closing.valid_to == date(2027, 9, 1)
+
+
+def test_reconcile_never_emits_valid_to_before_valid_from():
+    idx = ReconcileIndex()
+    days = [date(2027, 8, 22), date(2027, 7, 23), date(2027, 9, 2), date(2027, 8, 1), date(2027, 9, 10)]
+    closings = []
+    for i, d in enumerate(days):
+        closings += idx.reconcile([_claim("camden row", "deadline", f"pour {i}", vf=d, observed=d, doc_id=f"d{i}")])
+    assert closings
+    assert all(c.valid_to >= c.valid_from for c in closings)

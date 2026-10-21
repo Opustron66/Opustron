@@ -110,6 +110,13 @@ class ReconcileIndex:
                 self._open[key] = c
                 continue
 
+            # Documents aren't ingested in date order. If the new claim starts before the
+            # open one, it is the older fact: closing the open one would give it
+            # valid_to < valid_from, so the later fact stays current.
+            new_start = _effective_start(c)
+            if old.valid_from is not None and new_start is not None and new_start < old.valid_from:
+                continue
+
             # Different value → old fact is superseded
             close_key = (old.subject.strip().lower(), old.predicate, old.object.strip().lower())
             if close_key not in llm_closed:

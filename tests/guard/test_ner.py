@@ -76,3 +76,34 @@ def test_missing_model_warns_once_and_falls_back(monkeypatch, caplog):
         assert {m.entity_type for m in detect("mail bob@corp.io")} == {"EMAIL_ADDRESS"}
         detect("again")
     assert sum("Name detection is OFF" in r.message for r in caplog.records) == 1
+
+
+def test_generic_site_words_are_not_redacted():
+    text = "The Tower crane ETA slipped; Tower is booked and the steel ETA is 11 August."
+    redacted, _ = pseudonymize(text)
+    assert redacted == text
+
+
+def test_multi_word_place_and_its_short_form_share_a_token():
+    redacted, mapping = pseudonymize(
+        "Ridgeway Depot closeout is late; the ridgeway closeout register shows 14."
+    )
+    assert redacted == "ORG_1 closeout is late; the ORG_1 closeout register shows 14."
+    assert reidentify(redacted, mapping).startswith("Ridgeway Depot closeout")
+
+
+def test_redact_names_switch_keeps_names_but_not_emails(monkeypatch, caplog):
+    monkeypatch.setenv("CHRONICLE_REDACT_NAMES", "off")
+    monkeypatch.setattr(pii_detector, "_names_off_warned", False)
+    with caplog.at_level(logging.WARNING, logger="chronicle.guard.pii_detector"):
+        redacted, _ = pseudonymize(TAKEOVER + " Mail dana@corp.com.")
+        pseudonymize(TAKEOVER)
+    assert redacted == TAKEOVER + " Mail EMAIL_1."
+    assert sum("CHRONICLE_REDACT_NAMES" in r.message for r in caplog.records) == 1
+
+
+@pytest.mark.parametrize("value", ["", "1", "on", "yes"])
+def test_redact_names_is_on_unless_switched_off(monkeypatch, value):
+    monkeypatch.setenv("CHRONICLE_REDACT_NAMES", value)
+    redacted, _ = pseudonymize(TAKEOVER)
+    assert "Dana Whitfield" not in redacted

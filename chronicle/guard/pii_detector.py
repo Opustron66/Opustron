@@ -9,6 +9,7 @@ Tier 1 runs; ``ner_available()`` reports which.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 
@@ -107,7 +108,41 @@ _PRESIDIO_ENTITY_TYPES = {
 }
 
 
+# spaCy tags these as entities in site-ops text ("Tower crane", "ETA"). They are
+# not identifying, and a model shown ORG_3 for "ETA" loses the question's meaning.
+GENERIC_TERMS = frozenset({"tower", "eta", "row", "depot", "site", "crane", "gate", "board"})
+_ACRONYM_RE = re.compile(r"[A-Z]{2,3}")
+
+# Same convention as llm_client's env switches.
+_FALSY = ("0", "false", "no", "off")
+_names_off_warned = False
+
+
+def names_redacted() -> bool:
+    """False when CHRONICLE_REDACT_NAMES turns name detection off (benchmark runs only)."""
+    global _names_off_warned
+    if os.environ.get("CHRONICLE_REDACT_NAMES", "1").strip().lower() not in _FALSY:
+        return True
+    if not _names_off_warned:
+        _names_off_warned = True
+        logger.warning(
+            "Name redaction disabled by CHRONICLE_REDACT_NAMES: names, organisations and places "
+            "reach the LLM as-is. Emails, phones, IDs and URLs are still pseudonymised."
+        )
+    return False
+
+
+def _is_generic(entity_type: str, value: str) -> bool:
+    # The word list applies to every type: spaCy also tags a bare "Tower" as PERSON.
+    value = value.strip()
+    if value.casefold() in GENERIC_TERMS:
+        return True
+    return entity_type in ("ORGANIZATION", "LOCATION") and bool(_ACRONYM_RE.fullmatch(value))
+
+
 def _presidio_detect(text: str) -> list[PiiMatch]:
+    if not names_redacted():
+        return []
     analyzer = _get_presidio_analyzer()
     if analyzer is None:
         return []
@@ -119,7 +154,7 @@ def _presidio_detect(text: str) -> list[PiiMatch]:
     return [
         PiiMatch(r.entity_type, text[r.start : r.end], r.start, r.end)
         for r in results
-        if r.score >= 0.6
+        if r.score >= 0.6 and not _is_generic(r.entity_type, text[r.start : r.end])
     ]
 
 

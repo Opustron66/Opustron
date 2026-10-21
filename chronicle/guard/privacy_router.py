@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import Literal
 
 from .pii_detector import detect
-from .pseudonymizer import PseudonymMapping, pseudonymize, reidentify
+from .pseudonymizer import PseudonymMapping, pseudonymize_all, reidentify
 
 
 class PrivacyRouter:
@@ -33,8 +33,8 @@ class PrivacyRouter:
         Returns (redacted_text, mapping). Pass an existing mapping to share
         tokens across multiple texts in the same request.
         """
-        entities = detect(text)
-        return pseudonymize(text, mapping, entities=entities)
+        [redacted], mapping = pseudonymize_all([text], mapping)
+        return redacted, mapping
 
     def restore(self, text: str, mapping: PseudonymMapping) -> str:
         """Re-identify ENTITY_N tokens in an LLM response."""
@@ -58,15 +58,14 @@ class PrivacyRouter:
         """Redact PII from every message in a chat-completion messages list.
 
         Returns (redacted_messages, mapping) where mapping is shared across
-        all messages so the same person gets the same token.
+        all messages so the same person gets the same token. Detection runs on
+        every message before any is rewritten, so a name found in the question
+        is also replaced where NER missed it in the evidence ("Camden Row" vs
+        "camden's").
         """
-        if mapping is None:
-            mapping = PseudonymMapping()
-
-        redacted: list[dict[str, str]] = []
-        for msg in messages:
-            content = msg.get("content", "")
-            redacted_content, mapping = self.redact(content, mapping)
-            redacted.append({**msg, "content": redacted_content})
-
+        contents = [msg.get("content", "") for msg in messages]
+        redacted_contents, mapping = pseudonymize_all(contents, mapping)
+        redacted = [
+            {**msg, "content": content} for msg, content in zip(messages, redacted_contents)
+        ]
         return redacted, mapping

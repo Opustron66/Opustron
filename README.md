@@ -46,6 +46,7 @@ set -a; source .env; set +a
 | `CHRONICLE_MAX_TOKENS` | Default completion budget for `chronicle.guard.llm` (1024). Reasoning models need ~8192 |
 | `TAVILY_API_KEY` | Web enrichment |
 | `CHRONICLE_REDACT_RECALL` | Hermes plugin: `0` stops masking emails/phones/IDs in recalled memory |
+| `CHRONICLE_REDACT_NAMES` | Benchmark runs only: `off` stops pseudonymising names, organisations and places (emails/phones/IDs stay masked). Unset = on |
 
 ## Calling a model: always use `chronicle.guard.llm`
 
@@ -246,6 +247,14 @@ to that proxy and verify accounting before reporting results. The adapter no
 longer reads `OPENAI_BASE_URL`, `OPENAI_API_KEY` or `MNEMO_MODEL`. A proxy run
 without model traffic is not an official result. Keep state and gold answers
 out of Git, and do not tune on gold answers.
+
+The guard pseudonymises names, organisations and places before every model
+call, and gives one entity the same token everywhere in a request ("Camden Row"
+and "camden's" both become `LOC_1`). Placeholders still cost some answer
+accuracy, so a benchmark run may set `CHRONICLE_REDACT_NAMES=off` to send real
+names. Emails, phones, IDs and URLs stay masked either way, and a warning is
+logged while names are off. Redaction is on by default: set the switch per run,
+not in `adapter.json` or `.env`, and report scores both with and without it.
 
 ## Memory Time Machine UI
 

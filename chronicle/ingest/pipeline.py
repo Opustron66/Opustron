@@ -75,6 +75,17 @@ def _write_docs(path: Path, docs: list[Document], roster) -> None:
             }, ensure_ascii=False) + "\n")
 
 
+def _drop_inverted(claims: list[Claim], extractor: ClaimExtractor) -> list[Claim]:
+    """Drop claims that end before they start, counting them under "interval"."""
+    kept = []
+    for c in claims:
+        if c.valid_from is not None and c.valid_to is not None and c.valid_to < c.valid_from:
+            extractor.dropped["interval"] += 1
+        else:
+            kept.append(c)
+    return kept
+
+
 def run_ingest(documents: Iterable[Document], state: Path, llm: LLM, *, model: str = "nemotron",
                cache_dir: Path | None = None, workers: int = 6) -> IngestStats:
     """Extract claims for each not-yet-ingested document and append them to ``state/claims.jsonl``.
@@ -136,6 +147,7 @@ def run_ingest(documents: Iterable[Document], state: Path, llm: LLM, *, model: s
                 continue
             resolved = [resolver.resolve_claim(c) for c in extracted]
             closings = reconciler.reconcile(resolved)
+            resolved, closings = _drop_inverted(resolved, extractor), _drop_inverted(closings, extractor)
             for c in resolved + closings:
                 out.write(c.model_dump_json() + "\n")
             out.flush()

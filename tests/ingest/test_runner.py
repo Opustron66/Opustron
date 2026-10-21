@@ -124,3 +124,21 @@ def test_docs_jsonl_written_once_per_doc_even_when_extraction_fails(tmp_path):
     email = next(d for d in docs if d["doc_id"] == "E:2026-04-16T09-12-00__aaaa0001")
     assert email["date"] and email["text"].strip()
     assert "Known people:" not in email["text"]  # prompt hint, not document text
+
+
+def test_inverted_interval_is_dropped_and_counted(tmp_path):
+    class InvertedLLM:
+        def complete(self, messages, schema=None):
+            quote = messages[1]["content"].split(".")[0] + "."
+            return json.dumps({"claims": [
+                {"subject": "alice chen", "predicate": "owns", "object": "payments",
+                 "valid_from": "today", "quote": quote},
+                {"subject": "alice chen", "predicate": "status", "object": "on leave",
+                 "valid_from": "2027-08-22", "valid_to": "2027-07-23", "quote": quote},
+            ]})
+
+    stats = ingest_corpus(FIX / "part_a", tmp_path, InvertedLLM())
+
+    claims = read_claims(tmp_path / "claims.jsonl")
+    assert claims and all(c.object != "on leave" for c in claims)
+    assert stats.dropped_by_reason.get("interval") == stats.documents
