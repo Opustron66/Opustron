@@ -107,3 +107,10 @@ def test_redact_names_is_on_unless_switched_off(monkeypatch, value):
     monkeypatch.setenv("CHRONICLE_REDACT_NAMES", value)
     redacted, _ = pseudonymize(TAKEOVER)
     assert "Dana Whitfield" not in redacted
+
+
+def test_person_only_mode_masks_people_but_not_places(monkeypatch):
+    monkeypatch.setenv("CHRONICLE_REDACT_NAMES", "person")
+    redacted, _ = pseudonymize("Dana Whitfield moved the Ridgeway Depot closeout.")
+    assert "Dana Whitfield" not in redacted and "PERSON_1" in redacted
+    assert "Ridgeway Depot" in redacted

@@ -46,7 +46,7 @@ set -a; source .env; set +a
 | `CHRONICLE_MAX_TOKENS` | Default completion budget for `chronicle.guard.llm` (1024). Reasoning models need ~8192 |
 | `TAVILY_API_KEY` | Web enrichment |
 | `CHRONICLE_REDACT_RECALL` | Hermes plugin: `0` stops masking emails/phones/IDs in recalled memory |
-| `CHRONICLE_REDACT_NAMES` | Benchmark runs only: `off` stops pseudonymising names, organisations and places (emails/phones/IDs stay masked). Unset = on |
+| `CHRONICLE_REDACT_NAMES` | Benchmark runs only: `off` stops pseudonymising names, organisations and places (emails/phones/IDs stay masked); `person` masks people only, leaving organisations and places. Unset = on |
 
 ## Calling a model: always use `chronicle.guard.llm`
 

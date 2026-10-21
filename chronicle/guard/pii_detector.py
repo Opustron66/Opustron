@@ -132,6 +132,16 @@ def names_redacted() -> bool:
     return False
 
 
+# Kept by CHRONICLE_REDACT_NAMES=person: people stay masked; organisations and places (which in a
+# site-operations corpus are mostly project and site names) reach the model as written.
+_PERSON_ONLY_DROPS = frozenset({"ORGANIZATION", "LOCATION", "NRP"})
+
+
+def person_only() -> bool:
+    """True when CHRONICLE_REDACT_NAMES=person: pseudonymise people, not organisations or places."""
+    return os.environ.get("CHRONICLE_REDACT_NAMES", "").strip().lower() == "person"
+
+
 def _is_generic(entity_type: str, value: str) -> bool:
     # The word list applies to every type: spaCy also tags a bare "Tower" as PERSON.
     value = value.strip()
@@ -155,6 +165,7 @@ def _presidio_detect(text: str) -> list[PiiMatch]:
         PiiMatch(r.entity_type, text[r.start : r.end], r.start, r.end)
         for r in results
         if r.score >= 0.6 and not _is_generic(r.entity_type, text[r.start : r.end])
+        and not (person_only() and r.entity_type in _PERSON_ONLY_DROPS)
     ]
 
 
