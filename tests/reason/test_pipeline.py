@@ -61,3 +61,15 @@ def test_malformed_questions_are_skipped_without_logging_content(tmp_path, capsy
 
 def test_summary():
     assert summarize([{"category":"as_of","correct":True},{"category":"as_of","correct":False}])["as_of"]["accuracy"] == .5
+
+
+def test_one_failing_question_does_not_end_the_run(tmp_path, capsys):
+    inp = io.StringIO('{"id":"q1","question":"a"}\n{"id":"q2","question":"b"}\n')
+    out = io.StringIO()
+    replies = [ValueError("LLM returned no JSON object"), AnswerResult("Bob", ["E:two"])]
+    with patch("adapters.chronicle.answer.answer_question", side_effect=replies):
+        run(tmp_path, inp, out)
+    rows = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert rows == [{"id": "q1", "answer": "Not in the corpus", "source_ids": []},
+                    {"id": "q2", "answer": "Bob", "source_ids": ["E:two"]}]
+    assert "q1: answering failed: ValueError" in capsys.readouterr().err

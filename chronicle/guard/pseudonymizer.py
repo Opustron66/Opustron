@@ -86,6 +86,7 @@ class PseudonymMapping:
     _counters: dict[str, int] = field(default_factory=dict)  # prefix → count
     _name_keys: dict[str, str] = field(default_factory=dict)  # name key → token
     _aliases: set[str] = field(default_factory=set)          # head-word keys
+    _surfaces: dict[str, dict[str, str]] = field(default_factory=dict)  # token → spellings seen
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def token_for(self, entity_type: str, value: str) -> str:
@@ -119,6 +120,30 @@ class PseudonymMapping:
                     self._name_keys[head] = token
                     self._aliases.add(head)
             return token
+
+    def note_surface(self, token: str, text: str) -> None:
+        """Record how a source text spelled a token's value ("camden", "Camden Row's")."""
+        with self._lock:
+            self._surfaces.setdefault(token, {}).setdefault(" ".join(text.split()).casefold(),
+                                                            " ".join(text.split()))
+
+    def surfaces(self) -> dict[str, list[str]]:
+        """Restored value → the other spellings its token replaced in the request.
+
+        ``reidentify`` always restores the full name, so a quote the model copied from
+        "camden's crew" comes back as "Camden Row crew". Callers that check quotes
+        against the source can try these spellings instead.
+        """
+        with self._lock:
+            out = {}
+            for token, seen in self._surfaces.items():
+                value = self._reverse.get(token)
+                if value is None:
+                    continue
+                others = [v for k, v in seen.items() if k != value.casefold()]
+                if others:
+                    out[value] = others
+            return out
 
     def original_for(self, token: str) -> str | None:
         with self._lock:
@@ -177,9 +202,17 @@ def pseudonymize_all(
             if match.entity_type not in _NAME_TYPES:
                 result = result[: match.start] + token + result[match.end :]
         if pattern is not None:
-            result = pattern.sub(lambda m: mapping.name_token(m.group()) or m.group(), result)
+            result = pattern.sub(lambda m: _swap(mapping, m.group()), result)
         out.append(result)
     return out, mapping
+
+
+def _swap(mapping: PseudonymMapping, text: str) -> str:
+    token = mapping.name_token(text)
+    if token is None:
+        return text
+    mapping.note_surface(token, text)
+    return token
 
 
 def pseudonymize(

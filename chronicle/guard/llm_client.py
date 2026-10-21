@@ -148,6 +148,7 @@ class LLMClient:
         self._timeout = timeout
         self._transport = transport
         self._transport_lock = threading.Lock()
+        self._local = threading.local()
         # CHRONICLE_STRUCTURED=false skips response_format; it also flips off once the endpoint rejects json_schema
         self._structured = os.environ.get("CHRONICLE_STRUCTURED", "1").lower() not in _FALSY
         if thinking is None and (env := os.environ.get("CHRONICLE_THINKING")):
@@ -197,6 +198,7 @@ class LLMClient:
 
         # Redact PII in all message contents
         redacted_messages, mapping = router.redact_messages(messages)
+        self._local.mapping = mapping
 
         # Check cache
         budget = max_tokens or self.max_tokens
@@ -235,6 +237,12 @@ class LLMClient:
             # Persist pseudonymised text only, after parsing/admission checks succeed.
             self._save_cache(cache_key, raw)
         return result
+
+    def restore_variants(self) -> dict[str, list[str]]:
+        """For the calling thread's last ``complete``: restored value → other spellings
+        the request used for it. Lets P1 match a restored quote back to its document."""
+        mapping = getattr(self._local, "mapping", None)
+        return mapping.surfaces() if mapping is not None else {}
 
     # ------------------------------------------------------------------
     # Internal

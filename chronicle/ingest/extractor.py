@@ -13,7 +13,8 @@ from .cache import DiskCache, cache_key
 from .roster import Roster
 from .temporal_normalizer import NormalizerConfig, resolve
 
-PROMPT_VERSION = "v4"
+# v5: quotes restored to the spelling the document used (no prompt change).
+PROMPT_VERSION = "v5"
 
 # Controlled predicate vocabulary.  ``related_to`` is intentionally absent.
 PREDICATES = [
@@ -207,6 +208,34 @@ def _squash(s: str) -> str:
     return re.sub(r"[\W_]+", "", re.sub(r"\]\([^)]*\)", "", s)).lower()
 
 
+def restore_quote(quote: str, haystack: str, variants: dict[str, list[str]]) -> str:
+    """Return ``quote`` re-spelled so it matches the document, or unchanged if it can't be.
+
+    The privacy router restores every pseudonym to the entity's full name, but the document may
+    have said "camden" or "Camden Row's". Try each restored name's other spellings, one name
+    at a time and then together, until the squashed quote is found in the squashed document.
+    """
+    if not variants or _squash(quote) in haystack:
+        return quote
+    present = [v for v in sorted(variants, key=len, reverse=True)
+               if re.search(re.escape(v), quote, re.IGNORECASE)]
+    candidates = [quote]
+    for value in present[:4]:
+        pattern = re.compile(re.escape(value), re.IGNORECASE)
+        candidates += [pattern.sub(lambda _m, a=alt: a, c) for c in candidates for alt in variants[value]]
+        for c in candidates:
+            if _squash(c) in haystack:
+                return c
+    # Mixed spellings of one name inside one quote: try one occurrence at a time.
+    for value in present[:4]:
+        for m in re.finditer(re.escape(value), quote, re.IGNORECASE):
+            for alt in variants[value]:
+                c = quote[:m.start()] + alt + quote[m.end():]
+                if _squash(c) in haystack:
+                    return c
+    return quote
+
+
 def classify_doc(doc: Document) -> str:
     """Return ``"automated"`` for bot/notification emails; ``"human"`` otherwise."""
     folder = str(doc.metadata.get("folder") or "")
@@ -332,6 +361,12 @@ class ClaimExtractor:
         except ValueError:  # one repair retry
             messages.append({"role": "user", "content": 'Reply with ONLY valid JSON: {"claims": [...]}'})
             raw = parse_llm_json(self.llm.complete(messages, CLAIMS_SCHEMA))
+        variants = getattr(self.llm, "restore_variants", lambda: {})()
+        if variants:
+            haystack = _squash(rendered)
+            for c in raw:
+                if isinstance(c.get("quote"), str):
+                    c["quote"] = restore_quote(c["quote"], haystack, variants)
         if self.cache:
             self.cache.put(key, raw)
         return raw

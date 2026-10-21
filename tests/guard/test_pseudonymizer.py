@@ -111,3 +111,10 @@ def test_names_inside_emails_are_left_to_the_email_token():
         entities=[PiiMatch("PERSON", "Dana", 0, 4), PiiMatch("EMAIL_ADDRESS", "dana@corp.com", 16, 29)],
     )
     assert redacted == "PERSON_1 wrote from EMAIL_1"
+
+
+def test_surfaces_lists_the_other_spellings_a_token_replaced():
+    text = "Camden Row is late. camden's budget is tight."
+    redacted, mapping = pseudonymize(text, entities=[PiiMatch("LOCATION", "Camden Row", 0, 10)])
+    assert "camden" not in redacted.casefold()
+    assert mapping.surfaces() == {"Camden Row": ["camden"]}

@@ -247,3 +247,26 @@ def test_header_quote_passes_verification():
     ex = ClaimExtractor(FakeLLM([reply]))
     claims = ex.extract(doc)
     assert len(claims) == 1
+
+
+def test_restored_quote_is_respelled_to_the_documents_alias():
+    from chronicle.ingest.extractor import restore_quote, _squash
+    doc = "Priya: camden's day to day goes to me from Monday."
+    haystack = _squash(doc)
+    quote = "Camden Row day to day goes to me"
+    assert restore_quote(quote, haystack, {"Camden Row": ["camden's"]}) == "camden's day to day goes to me"
+    assert restore_quote(quote, haystack, {}) == quote
+
+
+def test_extractor_keeps_quotes_the_router_restored_to_the_full_name():
+    doc = Document(doc_id="S:site@2026-05-12", text="Priya takes camden day to day from Monday.",
+                   doc_date=date(2026, 5, 12), kind="slack")
+    reply = json.dumps({"claims": [{"subject": "Priya", "predicate": "role", "object": "Camden Row day to day",
+                                    "valid_from": "2026-05-18", "quote": "Priya takes Camden Row day to day"}]})
+
+    class RouterLLM(FakeLLM):
+        def restore_variants(self):
+            return {"Camden Row": ["camden"]}
+
+    claims = ClaimExtractor(RouterLLM([reply])).extract(doc)
+    assert [c.quote for c in claims] == ["Priya takes camden day to day"]
