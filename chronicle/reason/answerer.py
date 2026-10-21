@@ -37,10 +37,18 @@ def _contract() -> str:
     except ImportError:
         return FALLBACK_CONTRACT
 
+def _render(e: Evidence) -> str:
+    if e.kind == "topic":
+        return f"[timeline, latest statement {e.date}]\n{e.text}"
+    if e.kind == "entity":
+        return f"[person page]\n{e.text}"
+    return f"[{e.doc_id}] date={e.date}\n{e.text}"
+
+
 def generate_answer(plan: QueryPlan, evidence: list[Evidence]) -> AnswerResult:
     if not evidence:
         return AnswerResult("Not in the corpus", [])
-    context = "\n\n".join(f"[{e.doc_id}] date={e.date}\n{e.text}" for e in evidence)
+    context = "\n\n".join(_render(e) for e in evidence)
     reference = f"Answer as of {plan.reference_date.isoformat()}.\n\n" if plan.reference_date else ""
     messages = [
         {"role": "system", "content": f"{_contract()}\n\n{EVIDENCE_RULES}"},
@@ -49,7 +57,7 @@ def generate_answer(plan: QueryPlan, evidence: list[Evidence]) -> AnswerResult:
     parsed = llm.complete(messages, schema=ANSWER_SCHEMA)
     if not isinstance(parsed, dict):
         raise ValueError("LLM returned no JSON object")
-    allowed = {e.doc_id for e in evidence}
+    allowed = {e.doc_id for e in evidence} | {d for e in evidence for d in e.cites}
     ids = parsed.get("source_ids") or []
     if not isinstance(ids, list):
         ids = []

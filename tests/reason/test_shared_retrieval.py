@@ -103,3 +103,16 @@ def test_adapter_skips_invalid_as_of_then_continues(tmp_path, claims, capsys, in
     error = capsys.readouterr().err
     assert "line 1: invalid 'as_of' date" in error
     assert "private" not in error
+
+
+def test_topic_timeline_is_cut_at_the_reference_date():
+    from datetime import date
+
+    from chronicle.reason.retriever import page_as_of
+    content = ("TOPIC: steel - ETA\n- 2027-07-21 [E:1]: 11 Aug | \"ETA 11 Aug\"\n"
+               "- 2027-08-06 [E:2]: 3 Sep (effective 2027-09-03) | \"now 3 Sep\"\n"
+               "VALUES IN ORDER: 11 Aug -> 3 Sep\nLATEST (2027-08-06): 3 Sep")
+    cut = page_as_of(content, date(2027, 7, 30))
+    assert "3 Sep" not in cut and cut.endswith("LATEST (2027-07-21): 11 Aug")
+    assert page_as_of(content, date(2027, 7, 1)) == ""
+    assert page_as_of(content, None) == content

@@ -9,6 +9,7 @@ Reads that callers need live in ``queries`` and ``search``; ``api.MemoryAPI`` pu
 """
 
 import hashlib
+import json
 import sqlite3
 import threading
 from collections.abc import Callable, Iterator
@@ -360,6 +361,57 @@ class MemoryDatabase:
             ).fetchone()["entity_id"]
             conn.execute("INSERT OR REPLACE INTO entity_aliases (alias, entity_id) VALUES (?, ?)",
                          [normalize_key(alias), entity_id])
+
+    # -- pages (P1 consolidation) --------------------------------------------------------------
+
+    def sync_pages(self, pages: list[dict[str, Any]]) -> dict[str, int]:
+        """Make the stored topic/entity pages match ``pages`` (rows of P1's ``pages.jsonl``).
+
+        A page is keyed by ``page_id``. Unchanged pages are left alone; a changed page gets a new
+        fact version (the old row is replaced in transaction time, never deleted); a page missing
+        from ``pages`` (merged into another topic) is replaced with nothing. Kind is the page's
+        ``kind`` ("topic" or "entity"), so ``search(kind="topic")`` finds them.
+        """
+        counts = {"added": 0, "revised": 0, "unchanged": 0, "retired": 0}
+        with self.transaction() as conn:
+            now = self.now()
+            current = {r["spo_key"]: r for r in self._current("kind IN ('topic', 'entity')", [])}
+            wanted = set()
+            for page in pages:
+                spo = f"page|{page['page_id']}"
+                wanted.add(spo)
+                digest = hashlib.sha256(json.dumps(page, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+                fact_id = f"{page['page_id']}_{digest}"
+                old = current.get(spo)
+                if old is not None and old["fact_id"] == fact_id:
+                    counts["unchanged"] += 1
+                    continue
+                if old is not None:
+                    conn.execute("UPDATE facts SET replaced_at = ? WHERE row_id = ?", [now, old["row_id"]])
+                counts["revised" if old is not None else "added"] += 1
+                start = to_ts(page.get("valid_from")) if page.get("valid_from") else None
+                conn.execute(
+                    """INSERT INTO facts (fact_id, kind, subject, predicate, object, subject_key, object_key,
+                       content, spo_key, valid_from, granularity, recorded_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'day', ?)""",
+                    [fact_id, page["kind"], page["title"], "timeline" if page["kind"] == "topic" else "page",
+                     page.get("current", ""), normalize_key(page["title"]), normalize_key(page.get("current", "")),
+                     page["content"], spo, start, now],
+                )
+                for src in page.get("sources", []):
+                    conn.execute(
+                        """INSERT OR IGNORE INTO fact_sources (fact_id, claim_hash, role, doc_id, quote, observed_at,
+                           valid_from, recorded_at) VALUES (?, ?, 'restated', ?, ?, ?, ?, ?)""",
+                        [fact_id, hashlib.sha256(f"{fact_id}|{src['doc_id']}|{src['quote']}".encode()).hexdigest(),
+                         src["doc_id"], src["quote"],
+                         to_ts(src["observed_at"]) if src.get("observed_at") else None,
+                         to_ts(src["valid_from"]) if src.get("valid_from") else None, now],
+                    )
+            for spo, row in current.items():
+                if spo not in wanted:
+                    conn.execute("UPDATE facts SET replaced_at = ? WHERE row_id = ?", [now, row["row_id"]])
+                    counts["retired"] += 1
+        return counts
 
     # -- notes (Hermes) ------------------------------------------------------------------------
 

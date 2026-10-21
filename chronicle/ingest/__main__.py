@@ -1,11 +1,13 @@
 """CLI: ``python -m chronicle.ingest --corpus DIR --state DIR [--part a|b] [--model ID]``."""
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from chronicle.guard import LLMClient
 
+from .consolidate import consolidate
 from .pipeline import ingest_corpus
 
 # Nemotron reasoning models spend thousands of tokens thinking before the JSON answer.
@@ -24,6 +26,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--workers", type=int, default=6, help="parallel extraction calls")
     p.add_argument("--timeout", type=float, default=180, help="per-call LLM timeout, seconds")
     p.add_argument("--max-tokens", type=int, default=INGEST_MAX_TOKENS, help="per-call completion budget")
+    p.add_argument("--consolidate", action=argparse.BooleanOptionalAction,
+                   default=os.environ.get("CHRONICLE_CONSOLIDATE", "1").lower() not in ("0", "false", "no", "off"),
+                   help="build topic timelines and entity pages after ingesting (default: on)")
     p.add_argument("--thinking", action=argparse.BooleanOptionalAction, default=INGEST_THINKING,
                    help="let a reasoning model think before extracting (default: off)")
     args = p.parse_args(argv)
@@ -36,6 +41,9 @@ def main(argv: list[str] | None = None) -> int:
                     thinking=args.thinking)
     stats = ingest_corpus(args.corpus, args.state, llm, model=llm.model, workers=args.workers)
     print(f"[chronicle] part={args.part} {stats}", file=sys.stderr)
+    if args.consolidate and stats.documents + stats.skipped:
+        pages = consolidate(args.state, llm, model=llm.model, workers=args.workers)
+        print(f"[chronicle] consolidate {pages}", file=sys.stderr)
     return 1 if stats.failed and not stats.documents else 0
 
 

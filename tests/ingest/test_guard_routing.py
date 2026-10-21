@@ -91,7 +91,8 @@ def test_cli_ingests_through_guard_and_logs_egress(guarded, monkeypatch):
 
     monkeypatch.setattr(cli, "LLMClient", Client)
     state = guarded / "state"
-    rc = cli.main(["--corpus", str(FIX), "--state", str(state), "--model", "m-test", "--timeout", "7"])
+    rc = cli.main(["--corpus", str(FIX), "--state", str(state), "--model", "m-test", "--timeout", "7",
+                   "--no-consolidate"])
 
     assert rc == 0
     assert made == {"default_model": "m-test", "timeout": 7.0, "max_tokens": 8192, "thinking": False}
