@@ -96,3 +96,9 @@ def test_cache_stores_tokens_not_restored_email():
     cached = next(llm_client._CACHE_DIR.glob("*.txt")).read_text()
     assert cached == "EMAIL_1"
     assert "maya@example.test" not in json.dumps(calls)
+
+
+def test_local_proxy_port_does_not_split_the_cache():
+    from chronicle.guard.llm_client import _cache_endpoint
+    assert _cache_endpoint("http://127.0.0.1:53111/v1/") == _cache_endpoint("http://127.0.0.1:60222/v1")
+    assert _cache_endpoint("https://api.tokenfactory.nebius.com/v1/") == "https://api.tokenfactory.nebius.com/v1"

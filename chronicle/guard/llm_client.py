@@ -313,7 +313,7 @@ class LLMClient:
         temperature: float = 0.0,
     ) -> str:
         payload = json.dumps({"version": 2, "messages": messages, "schema": schema, "model": model,
-                              "base_url": self._base_url.rstrip("/"),
+                              "base_url": _cache_endpoint(self._base_url),
                               "max_tokens": max_tokens or self.max_tokens, "temperature": temperature,
                               "structured": self._structured, "thinking": self.thinking}, sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()
@@ -325,6 +325,15 @@ class LLMClient:
     def _save_cache(self, key: str, content: str) -> None:
         path = _CACHE_DIR / f"{key}.txt"
         path.write_text(content, encoding="utf-8")
+
+
+_LOOPBACK = re.compile(r"^(https?://)(?:127\.0\.0\.1|localhost|\[::1\]):\d+", re.IGNORECASE)
+
+
+def _cache_endpoint(base_url: str) -> str:
+    """Endpoint part of the cache key. A local proxy (the benchmark's accounting proxy) gets a
+    new port every run; keying on the port would make every run a cold cache."""
+    return _LOOPBACK.sub(r"\1loopback", base_url.rstrip("/"))
 
 
 def _rejects_schema(exc: Exception) -> bool:
