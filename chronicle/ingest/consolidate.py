@@ -40,7 +40,7 @@ from .temporal_normalizer import resolve
 
 PAGES_FILE = "pages.jsonl"
 CONSOLIDATE_VERSION = "c1"
-MERGE_BATCH = 180
+MERGE_BATCH = 60
 # Rendered timelines keep the newest entries when a topic is very long.
 MAX_ENTRIES = 24
 
@@ -84,11 +84,17 @@ UPDATES_SCHEMA = {
 }
 
 MERGE_PROMPT = """\
-These topic names were extracted from different documents of one project corpus. Group the names
-that track the SAME value: the same thing and the same attribute, even when worded differently,
-abbreviated or partly named ("camden day to day" = "Camden Row - site-side day-to-day lead").
-Do not merge different items (two different loads, sites or people) or different attributes of
-one thing (an ETA and a cost).
+These topic names were extracted from different documents of one project corpus. Each names a
+thing and one attribute of it ("<thing> - <attribute>"). Group the names that track the SAME value,
+so that a later question like "the pour window moved twice; what was it in between?" finds every
+statement of that value in one group.
+Merge when the thing AND the attribute are the same, even if worded differently, abbreviated or
+partly named: "camden day to day" = "Camden Row - site-side day-to-day lead";
+"Camden Row podium - pour date" = "Camden Row - pour window"; "HPS-1/HPS-2 ETA" = "Harbor Point
+steel HPS-1/HPS-2 - delivery ETA".
+Never merge different attributes of one thing ("fire drill - date" vs "fire drill - marshals
+needed"; an ETA vs a cost) or different items (HPS-1/HPS-2 vs HPS-3; two sites; two people).
+When unsure, do not merge.
 Output ONLY JSON: {"groups": [{"name": "<best full name>", "members": [<ids>]}]}
 List only groups with two or more members."""
 
@@ -159,7 +165,7 @@ def parse_updates(raw: str, key: str) -> list[dict[str, Any]]:
 def discover(doc: dict, llm: LLM, *, model: str, cache: DiskCache | None) -> tuple[list[Update], int]:
     """Tracked-value updates in one ``docs.jsonl`` row; returns (updates, dropped_for_quote)."""
     text, stated = doc["text"], doc.get("date") or ""
-    key = cache_key(model, CONSOLIDATE_VERSION, "discover", stated, text)
+    key = cache_key(model, CONSOLIDATE_VERSION, "discover", DISCOVER_PROMPT, stated, text)
     raw = cache.get(key) if cache else None
     if raw is None:
         messages = [{"role": "system", "content": DISCOVER_PROMPT.format(doc_date=stated)},
@@ -246,7 +252,7 @@ def merge_names(names: list[str], llm: LLM, *, model: str, cache: DiskCache | No
     canon = {n: n for n in names}
     for batch in blocks(names):
         listing = "\n".join(f"{j}: {names[i]}" for j, i in enumerate(batch))
-        key = cache_key(model, CONSOLIDATE_VERSION, "merge", listing)
+        key = cache_key(model, CONSOLIDATE_VERSION, "merge", MERGE_PROMPT, listing)
         groups = cache.get(key) if cache else None
         if groups is None:
             messages = [{"role": "system", "content": MERGE_PROMPT}, {"role": "user", "content": listing}]
@@ -279,7 +285,8 @@ def render_topic(name: str, entries: list[Update]) -> str:
     lines = [f"TOPIC: {name}"]
     for u in entries[-MAX_ENTRIES:]:
         eff = f" (effective {u.effective})" if u.effective and u.effective != u.stated else ""
-        lines.append(f"- {u.stated} [{u.doc_id}]: {u.value}{eff} | \"{u.quote}\"")
+        label = f"{{{u.topic}}} " if u.topic != name else ""
+        lines.append(f"- {u.stated} [{u.doc_id}]: {label}{u.value}{eff} | \"{u.quote}\"")
     latest = entries[-1]
     values = list(dict.fromkeys(u.value for u in entries))
     if len(values) > 1:

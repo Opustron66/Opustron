@@ -42,7 +42,12 @@ def main(argv: list[str] | None = None) -> int:
     stats = ingest_corpus(args.corpus, args.state, llm, model=llm.model, workers=args.workers)
     print(f"[chronicle] part={args.part} {stats}", file=sys.stderr)
     if args.consolidate and stats.documents + stats.skipped:
-        pages = consolidate(args.state, llm, model=llm.model, workers=args.workers)
+        # CHRONICLE_CONSOLIDATE_MODEL: a stronger model for this one-time pass (default: same model).
+        consolidator = llm
+        if (other := os.environ.get("CHRONICLE_CONSOLIDATE_MODEL")) and other != llm.model:
+            consolidator = LLMClient(default_model=other, timeout=args.timeout, max_tokens=args.max_tokens,
+                                     thinking=args.thinking)
+        pages = consolidate(args.state, consolidator, model=consolidator.model, workers=args.workers)
         print(f"[chronicle] consolidate {pages}", file=sys.stderr)
     return 1 if stats.failed and not stats.documents else 0
 
