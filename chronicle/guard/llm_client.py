@@ -140,7 +140,8 @@ class LLMClient:
         self._default_model = default_model or os.environ.get(
             "CHRONICLE_MODEL", DEV_MODEL
         )
-        self._use_cache = use_cache
+        # CHRONICLE_LLM_CACHE=off: no cache reads or writes, so a benchmark trial makes fresh calls.
+        self._use_cache = use_cache and os.environ.get("CHRONICLE_LLM_CACHE", "1").lower() not in _FALSY
         self._router = privacy_router  # set after construction to avoid circular import
         self.max_tokens = max_tokens or int(
             os.environ.get("CHRONICLE_MAX_TOKENS", DEFAULT_MAX_TOKENS)
@@ -155,7 +156,7 @@ class LLMClient:
             thinking = env.lower() not in _FALSY
         self.thinking = thinking
 
-        if use_cache:
+        if self._use_cache:
             _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     @property

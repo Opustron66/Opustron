@@ -44,6 +44,7 @@ set -a; source .env; set +a
 | `NEBIUS_BASE_URL` | Defaults to `https://api.tokenfactory.nebius.com/v1/` |
 | `CHRONICLE_MODEL` | Defaults to the cheap dev model; use the large model only for official benchmark runs |
 | `CHRONICLE_MAX_TOKENS` | Default completion budget for `chronicle.guard.llm` (1024). Reasoning models need ~8192 |
+| `CHRONICLE_LLM_CACHE` | `off` disables the response cache in `~/.chronicle/llm_cache` (independent benchmark trials). Unset = on |
 | `TAVILY_API_KEY` | Web enrichment |
 | `CHRONICLE_REDACT_RECALL` | Hermes plugin: `0` stops masking emails/phones/IDs in recalled memory |
 | `CHRONICLE_REDACT_NAMES` | Benchmark runs only: `off` stops pseudonymising names, organisations and places (emails/phones/IDs stay masked); `person` masks people only, leaving organisations and places. Unset = on |
