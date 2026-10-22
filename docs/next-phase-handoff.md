@@ -42,22 +42,23 @@ cd /tmp/nemoclaw/examples/tools/agent-memory-benchmark/results/runs && /Users/sa
 ```
 Reference dirs for comparison: `agentic-rag_corpus-a_nemotron`, `self-model_corpus-a_nemotron`.
 
-## Runs still going (started 22 Oct; Lightning is about 2.5 min per question)
+## Runs that need redoing: the API key stopped working
 
-Logs are in `/Users/sara/Desktop/Opustron-bench/logs/`; each ends with `### exit N <run dir>`.
+At about 13:00 on 22 Oct the Nebius key began returning `401 Couldn't authenticate`
+(probably credits ran out). I stopped every run. These are **invalid** and must be re-run once the
+key works (check with `curl -s https://api.tokenfactory.nebius.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"`):
 
-| Log | What | Code |
+| Log in `/Users/sara/Desktop/Opustron-bench/logs/` | What | REF |
 |---|---|---|
-| `p3-b-lightning-off.log` | B ladder p3 = final, redaction off | ladder/p3 |
-| `final-b-lightning-on.log` | B final, redaction on | final (d6dfc55) |
-| `final-a-lightning-off.log` | A final, redaction off | 9d5d12a (off path identical) |
-| `final-a-lightning-on.log` | A final, redaction on | final (d6dfc55) |
-| `final-t1-a-ultra-on.log`, `final-t2-a-ultra-on.log` | A Ultra on, 2 fresh trials (about 40 min) | final |
+| `p3-b-lightning-off.log` (scored 0.562, but 24 of 96 answers were 401s) | B ladder p3, off | ladder/p3 |
+| `final-b-lightning-on.log` | B final, on | final |
+| `final-a-lightning-off.log` | A final, off | final |
+| `final-a-lightning-on.log` | A final, on | final |
+| `final-t1-a-ultra-on.log`, `final-t2-a-ultra-on.log` (some 401s) | A Ultra on, 2 fresh trials | final (with `CHRONICLE_LLM_CACHE=off`) |
 
-Check progress: `wc -l <run dir>/answers.jsonl`. If the machine reboots, `/tmp` is wiped; the
-benchmark now lives at `/Users/sara/Desktop/Opustron-bench/nemoclaw` (NVIDIA/nemoclaw-community @
-f4b0a73), and `/tmp/nemoclaw` is only a symlink, so recreate it with
-`ln -sfn /Users/sara/Desktop/Opustron-bench/nemoclaw /tmp/nemoclaw`. Run dirs survive a reboot.
+To check a finished run for this: `grep -c "answering failed" <log>` should be about 0.
+Since e8d2690, `answer.py` retries network errors twice, but a dead key still fails.
+Lightning takes about 2.5 min per question: about 4 h per corpus B run and about 8 h per corpus A run.
 
 ## How to run
 
