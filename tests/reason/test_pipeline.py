@@ -74,3 +74,13 @@ def test_one_failing_question_does_not_end_the_run(tmp_path, capsys):
     assert rows == [{"id": "q1", "answer": "Not in the corpus", "source_ids": []},
                     {"id": "q2", "answer": "Bob", "source_ids": ["E:two"]}]
     assert "q1: answering failed: ValueError" in capsys.readouterr().err
+
+
+def test_network_errors_are_retried_but_bad_replies_are_not(tmp_path):
+    inp = io.StringIO('{"id":"q1","question":"a"}\n{"id":"q2","question":"b"}\n')
+    out = io.StringIO()
+    replies = [ConnectionError("dns"), AnswerResult("Bob", ["E:two"]), ValueError("no JSON")]
+    with patch("adapters.chronicle.answer.answer_question", side_effect=replies) as answer:
+        run(tmp_path, inp, out, retry_wait=0)
+    assert answer.call_count == 3
+    assert [json.loads(line)["answer"] for line in out.getvalue().splitlines()] == ["Bob", "Not in the corpus"]
