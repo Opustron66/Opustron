@@ -135,6 +135,22 @@ def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last:
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+BRIEF = ("Keep your reasoning short: a few sentences at most. The answer must be one short "
+         "JSON object.")
+
+
+def _complete(messages: list[dict], schema: dict):
+    """One model call; a reply cut off by the token limit (a reasoning model thinking too long)
+    is retried once with a request to think briefly."""
+    try:
+        return llm.complete(messages, schema=schema)
+    except ValueError as exc:
+        if "truncated reply" not in str(exc):
+            raise
+        retry = [*messages[:-1], {**messages[-1], "content": messages[-1]["content"] + "\n\n" + BRIEF}]
+        return llm.complete(retry, schema=schema)
+
+
 def _key(e: Evidence) -> tuple:
     return (e.kind, e.doc_id, e.text[:80])
 
@@ -150,13 +166,12 @@ def generate_answer(plan: QueryPlan, evidence: list[Evidence], tools: Tools | No
         return AnswerResult("Not in the corpus", [])
     evidence = list(evidence)
     if tools is None:
-        parsed = llm.complete(_messages(plan, evidence, agentic=False, last=True), schema=ANSWER_SCHEMA)
+        parsed = _complete(_messages(plan, evidence, agentic=False, last=True), ANSWER_SCHEMA)
     else:
         note = ""
         for round_number in range(1, MAX_ROUNDS + 1):
             last = round_number == MAX_ROUNDS
-            parsed = llm.complete(_messages(plan, evidence, agentic=True, last=last, note=note),
-                                  schema=AGENT_SCHEMA)
+            parsed = _complete(_messages(plan, evidence, agentic=True, last=last, note=note), AGENT_SCHEMA)
             if not isinstance(parsed, dict):
                 raise ValueError("LLM returned no JSON object")
             action = parsed.get("action")

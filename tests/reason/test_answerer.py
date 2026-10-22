@@ -60,3 +60,11 @@ def test_chain_questions_get_the_in_between_template():
     assert "In between:" in answer_template(QueryPlan("The pour window moved more than once. Give the value it held in between, and the value now."))
     assert "earliest first" in answer_template(QueryPlan("Put these in the order they happened, earliest first: a; b"))
     assert answer_template(QueryPlan("Who owns payments?")) == ""
+
+
+def test_truncated_reply_is_retried_once_asking_for_brief_reasoning():
+    replies = [ValueError("truncated reply (finish_reason=length, max_tokens=16384)"),
+               {"answer": "Alice", "source_ids": ["E:one"]}]
+    with patch("chronicle.reason.answerer.llm.complete", side_effect=replies) as complete:
+        assert generate_answer(QueryPlan("x"), [Evidence("E:one", "Alice")]).answer == "Alice"
+    assert complete.call_count == 2 and "reasoning short" in complete.call_args.args[0][-1]["content"]
