@@ -150,6 +150,33 @@ def _is_generic(entity_type: str, value: str) -> bool:
     return entity_type in ("ORGANIZATION", "LOCATION") and bool(_ACRONYM_RE.fullmatch(value))
 
 
+_NAME_TYPES = frozenset({"PERSON", "ORGANIZATION", "LOCATION", "NRP"})
+# spaCy runs a name into the text after it ("Rohan Dasgupta: +1 jordan", JSON, code).
+_NAME_CUT = re.compile(r"[:\n(=\"{}\[\]]")
+_DIGIT = re.compile(r"\d")
+
+
+def _clean_name(entity_type: str, start: int, end: int, value: str) -> tuple[int, int, str] | None:
+    """Trim a name span at the first separator and drop spans that are not names.
+
+    spaCy tags values as names in this corpus ("0.71¢", "300ms", "Q4", "KR3", "v1→v2"). Pass two
+    of pseudonymisation replaces a registered name everywhere in the request, so one such span
+    hides that value from every message. Names here never contain digits.
+    """
+    if entity_type not in _NAME_TYPES:
+        return start, end, value
+    cut = _NAME_CUT.search(value)
+    if cut:
+        value = value[: cut.start()]
+    trimmed = value.rstrip(" .,;-")
+    value = trimmed.lstrip(" .,;-")
+    start += len(trimmed) - len(value)
+    end = start + len(value)
+    if len(value) < 2 or _DIGIT.search(value) or not any(ch.isalpha() for ch in value):
+        return None
+    return start, end, value
+
+
 def _presidio_detect(text: str) -> list[PiiMatch]:
     if not names_redacted():
         return []
@@ -161,12 +188,15 @@ def _presidio_detect(text: str) -> list[PiiMatch]:
         entities=list(_PRESIDIO_ENTITY_TYPES),
         language="en",
     )
-    return [
-        PiiMatch(r.entity_type, text[r.start : r.end], r.start, r.end)
-        for r in results
-        if r.score >= 0.6 and not _is_generic(r.entity_type, text[r.start : r.end])
-        and not (person_only() and r.entity_type in _PERSON_ONLY_DROPS)
-    ]
+    matches = []
+    for r in results:
+        if r.score < 0.6 or (person_only() and r.entity_type in _PERSON_ONLY_DROPS):
+            continue
+        cleaned = _clean_name(r.entity_type, r.start, r.end, text[r.start : r.end])
+        if cleaned is None or _is_generic(r.entity_type, cleaned[2]):
+            continue
+        matches.append(PiiMatch(r.entity_type, cleaned[2], cleaned[0], cleaned[1]))
+    return matches
 
 
 # ---------------------------------------------------------------------------

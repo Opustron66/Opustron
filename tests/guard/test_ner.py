@@ -114,3 +114,20 @@ def test_person_only_mode_masks_people_but_not_places(monkeypatch):
     redacted, _ = pseudonymize("Dana Whitfield moved the Ridgeway Depot closeout.")
     assert "Dana Whitfield" not in redacted and "PERSON_1" in redacted
     assert "Ridgeway Depot" in redacted
+
+
+@pytest.mark.parametrize("text, kept", [
+    ("Peak was 0.71¢ two weeks ago.", "0.71¢"),
+    ("The KR3 framing for Q4 is fine.", "KR3 framing for Q4"),
+    ("p95 is 300ms after the v1→v2 cutover.", "300ms"),
+])
+def test_values_spacy_tags_as_names_are_not_masked(text, kept):
+    redacted, _ = pseudonymize(text)
+    assert kept in redacted
+
+
+def test_name_spans_are_cut_at_speaker_separators():
+    from chronicle.guard.pii_detector import _clean_name
+    assert _clean_name("PERSON", 0, 25, "Rohan Dasgupta: +1 jordan") == (0, 14, "Rohan Dasgupta")
+    assert _clean_name("ORGANIZATION", 5, 10, "Q4 KR") is None
+    assert _clean_name("EMAIL_ADDRESS", 0, 9, "a@b.co x1") == (0, 9, "a@b.co x1")
