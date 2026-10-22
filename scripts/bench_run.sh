@@ -10,11 +10,12 @@
 #   VENV        python env with Chronicle's dependencies
 #   CONSOLIDATE_MODEL  model for the one-time consolidation pass (default: the run's model)
 # The body is one function so editing this file mid-run cannot change a running copy.
+SCRIPT_DIR=${0:A:h}
 main() {
   set -u
   local LABEL=$1 CORPUS=$2 MODEL=$3 REDACT=$4
   shift 4
-  local SRC=${0:A:h:h}
+  local SRC=${SCRIPT_DIR:h}
   local B=${BENCH:-/tmp/nemoclaw/examples/tools/agent-memory-benchmark}
   local VENV=${VENV:-/Users/sara/Desktop/Opustron-fullrun/.venv}
   local ENV_FILE=${ENV_FILE:-/Users/sara/Desktop/Opustron/.env}
