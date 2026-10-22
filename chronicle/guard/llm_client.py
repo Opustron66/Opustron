@@ -199,6 +199,7 @@ class LLMClient:
 
         # Redact PII in all message contents
         redacted_messages, mapping = router.redact_messages(messages)
+        redacted_messages = with_placeholder_note(redacted_messages)
         self._local.mapping = mapping
 
         # Check cache
@@ -326,6 +327,32 @@ class LLMClient:
     def _save_cache(self, key: str, content: str) -> None:
         path = _CACHE_DIR / f"{key}.txt"
         path.write_text(content, encoding="utf-8")
+
+
+_NAME_TOKEN = re.compile(r"\b(?:PERSON|ORG|LOC|NRP)_\d+\b")
+PLACEHOLDER_NOTE = (
+    "Privacy note: names of people, organisations and places in this request were replaced by "
+    "placeholders such as PERSON_1 or ORG_2. Each placeholder stands for one real name everywhere "
+    "in the request. Treat it exactly as that name: a fact stated about PERSON_1 is stated about "
+    "that person, and an answer may name PERSON_1. Do not call a value unstated because it sits "
+    "next to a placeholder."
+)
+
+
+def with_placeholder_note(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Tell the model how to read name placeholders, when the request contains any.
+
+    Without it, answers on redacted evidence hedged ("referenced as ... (specific value not
+    stated)") and the deterministic grader read them as not asserting the value.
+    CHRONICLE_PLACEHOLDER_NOTE=off leaves requests unchanged."""
+    if os.environ.get("CHRONICLE_PLACEHOLDER_NOTE", "1").lower() in _FALSY:
+        return messages
+    if not any(_NAME_TOKEN.search(m.get("content") or "") for m in messages):
+        return messages
+    if messages and messages[0].get("role") == "system":
+        first = {**messages[0], "content": f"{messages[0]['content']}\n\n{PLACEHOLDER_NOTE}"}
+        return [first, *messages[1:]]
+    return [{"role": "system", "content": PLACEHOLDER_NOTE}, *messages]
 
 
 _LOOPBACK = re.compile(r"^(https?://)(?:127\.0\.0\.1|localhost|\[::1\]):\d+", re.IGNORECASE)

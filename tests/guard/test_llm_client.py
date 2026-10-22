@@ -234,3 +234,14 @@ def test_cache_key_covers_reply_changing_settings():
     LLMClient(transport=t, max_tokens=32768).complete(msgs)
     LLMClient(transport=t, thinking=False).complete(msgs)
     assert len(t.calls) == 3
+
+
+def test_placeholder_note_is_added_only_when_names_were_replaced(monkeypatch):
+    from chronicle.guard.llm_client import PLACEHOLDER_NOTE, with_placeholder_note
+    plain = [{"role": "system", "content": "rules"}, {"role": "user", "content": "costs 0.42"}]
+    assert with_placeholder_note(plain) == plain
+    named = [{"role": "system", "content": "rules"}, {"role": "user", "content": "PERSON_1 owns it"}]
+    assert with_placeholder_note(named)[0]["content"] == "rules\n\n" + PLACEHOLDER_NOTE
+    assert with_placeholder_note(named[1:])[0] == {"role": "system", "content": PLACEHOLDER_NOTE}
+    monkeypatch.setenv("CHRONICLE_PLACEHOLDER_NOTE", "off")
+    assert with_placeholder_note(named) == named
