@@ -4,7 +4,7 @@ Spec: `/Users/sara/.claude/plans/can-you-do-the-splendid-kahn.md` (phases 0–4)
 Branch `claude/exp-next-phase-567359`, worktree
 `/Users/sara/Desktop/Opustron/.claude/worktrees/exp-next-phase-567359`. All commits are local;
 nothing has been pushed and there are no PRs. Sara approved local per-phase commits.
-`pytest -q` (with `/Users/sara/Desktop/Opustron-fullrun/.venv/bin/python`): 460 passed.
+`pytest -q` (with `/Users/sara/Desktop/Opustron-fullrun/.venv/bin/python`): 459 passed.
 
 ## Status
 
