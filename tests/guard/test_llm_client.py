@@ -69,7 +69,7 @@ def test_max_tokens_configurable(monkeypatch):
                                                                        max_tokens=50)
     monkeypatch.setenv("CHRONICLE_MAX_TOKENS", "4096")
     LLMClient(transport=t, use_cache=False).complete([{"role": "user", "content": "d"}])
-    assert [c["max_tokens"] for c in t.calls] == [1024, 8192, 50, 4096]
+    assert [c["max_tokens"] for c in t.calls] == [llm_client.DEFAULT_MAX_TOKENS, 8192, 50, 4096]
 
 
 def test_schema_rejection_falls_back_and_sticks():

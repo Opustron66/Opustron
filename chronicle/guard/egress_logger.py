@@ -32,8 +32,13 @@ class EgressLogger:
         redacted: bool,
         pii_types: list[str] | None = None,
         request_preview: str | None = None,
+        cached: bool = False,
     ) -> None:
-        """Append one structured record to the egress log."""
+        """Append one structured record to the egress log.
+
+        ``cached=True`` records a call answered from the local response cache: nothing
+        left the machine, but the record shows what would have been sent.
+        """
         record = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "provider": provider,
@@ -43,6 +48,7 @@ class EgressLogger:
             "redacted": redacted,
             "pii_types": pii_types or [],
             "request_preview": (request_preview or "")[:200],
+            "cached": cached,
         }
         with self._lock:
             with self._path.open("a", encoding="utf-8") as fh:

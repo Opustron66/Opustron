@@ -448,6 +448,8 @@ body {
 }
 .egress-badge.redacted { background: rgba(251,191,36,0.12); color: var(--amber); }
 .egress-badge.clean { background: rgba(74,222,128,0.12); color: var(--green); }
+.egress-badge.cached { background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border); }
+.egress-entry.egress-cached { opacity: 0.6; }
 .egress-pii-types { color: var(--amber); font-size: 11px; flex-shrink: 0; }
 .egress-tokens { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
 .egress-preview {

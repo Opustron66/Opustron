@@ -110,3 +110,12 @@ def test_cache_can_be_switched_off_for_independent_trials(monkeypatch):
     assert LLMClient(transport=lambda **kw: None)._use_cache is False
     monkeypatch.delenv("CHRONICLE_LLM_CACHE")
     assert LLMClient(transport=lambda **kw: None)._use_cache is True
+
+
+def test_egress_log_marks_cache_hits_as_not_sent():
+    client = LLMClient(transport=lambda **kw: response('{"claims": []}'))
+    client.complete(MESSAGES, schema=SCHEMA)
+    client.complete(MESSAGES, schema=SCHEMA)
+    second, first = egress_logger._default_logger.tail()  # newest first
+    assert first["cached"] is False and first["prompt_tokens"] == 3
+    assert second["cached"] is True and second["prompt_tokens"] == 0
