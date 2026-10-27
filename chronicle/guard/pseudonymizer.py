@@ -144,6 +144,7 @@ class PseudonymMapping:
     # first-name-only stand-in; ("", "") when two different originals share it.
     _restore: dict[str, tuple[str, str]] = field(default_factory=dict)
     _person_first: dict[str, str] = field(default_factory=dict)  # real first name → stand-in first
+    _place_head: dict[str, str] = field(default_factory=dict)    # real head word → stand-in head
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def avoid(self, texts: list[str]) -> None:
@@ -212,9 +213,17 @@ class PseudonymMapping:
                 self._person_first.setdefault(real_first, first)
                 self._identity[token] = (first, last)
             else:
-                place = self._pick(_PLACE_NAMES, used)
+                # Look-alikes keep their likeness: "Camden Row" and "Camden Yard" become
+                # "Alderbrook Row" and "Alderbrook Yard", so the model can still tell they are
+                # related (disambiguation questions) without seeing the real name. Only when
+                # the rest is generic; "Camden Logistics" vs "Camden Foods" get separate names.
+                real_head = words[0].casefold()
+                generic_tail = len(words) > 1 and all(w.casefold() in _GENERIC_TAIL for w in words[1:])
+                place = (self._place_head.get(real_head) if generic_tail else None) or self._pick(_PLACE_NAMES, used)
                 if place is None:
                     return
+                if generic_tail:
+                    self._place_head.setdefault(real_head, place)
                 self._identity[token] = (place, "")
         first, last = self._identity[token]
         if entity_type == "PERSON":
@@ -225,15 +234,23 @@ class PseudonymMapping:
         self._key_display[key] = display
         if head is not None:
             self._key_display.setdefault(head, first)
-        # A person's stand-in first name ("Jordan") restores to their real first name
-        # ("Dana"), which a single-word mention and the full name share. Everything else,
-        # and a place's head word, restores the full original.
-        targets = {first: ("text", words[0]) if entity_type == "PERSON" else ("token", token)}
-        if display != first:
-            targets[display] = ("token", token)
+        # A full stand-in restores its own original. Its first word alone ("Jordan",
+        # "Alderbrook") restores to the real first word ("Dana", "Camden"), which every
+        # entity sharing that stand-in word also shares.
+        if display == first:
+            targets = {first: ("token", token)}
+        else:
+            targets = {first: ("text", words[0]), display: ("token", token)}
         for text, target in targets.items():
-            if self._restore.setdefault(text, target) != target:
+            existing = self._restore.setdefault(text, target)
+            if existing != target and self._resolve(existing) != self._resolve(target):
                 self._restore[text] = ("", "")
+
+    def _resolve(self, target: tuple[str, str]) -> str | None:
+        kind, value = target
+        if kind == "token":
+            return self._reverse.get(value)
+        return value if kind == "text" else None
 
     def display(self, text: str, token: str) -> str:
         """What the model sees for a name occurrence: its stand-in, or the token."""
@@ -250,10 +267,7 @@ class PseudonymMapping:
 
     def original_for_surrogate(self, text: str) -> str | None:
         with self._lock:
-            kind, value = self._restore.get(text, ("", ""))
-            if kind == "token":
-                return self._reverse.get(value)
-            return value if kind == "text" else None
+            return self._resolve(self._restore.get(text, ("", "")))
 
     def note_surface(self, token: str, text: str) -> None:
         """Record how a source text spelled a token's value ("camden", "Camden Row's")."""

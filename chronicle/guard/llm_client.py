@@ -305,6 +305,11 @@ class LLMClient:
                                           "max_retries": 2}
                 if self._timeout is not None:
                     kwargs["timeout"] = self._timeout
+                if _LOOPBACK.match(self._base_url):
+                    # The benchmark's accounting proxy reads token usage from plain JSON and
+                    # cannot parse gzip, which Token Factory sends when allowed; without this
+                    # every run is marked "not comparable on cost".
+                    kwargs["default_headers"] = {"Accept-Encoding": "identity"}
                 self._transport = OpenAI(**kwargs).chat.completions.create
             return self._transport
 

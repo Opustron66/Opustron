@@ -139,3 +139,22 @@ def test_single_word_person_is_still_masked_in_lowercase_chat():
     text = "Dana approved it. ok thanks dana"
     [out], _ = run([text], [[match(text, "Dana")]], style="token")
     assert out == "PERSON_1 approved it. ok thanks PERSON_1"
+
+
+def test_look_alike_places_share_a_stand_in_word_but_restore_separately():
+    text = "Camden Row pour moved; Camden Yard is unaffected. Camden Logistics and Camden Foods bid."
+    names = ["Camden Row", "Camden Yard", "Camden Logistics", "Camden Foods"]
+    [out], mapping = run([text], [[match(text, n, "LOCATION") for n in names]])
+    row, yard = out.split(" pour")[0], out.split("; ")[1].split(" is")[0]
+    assert row.split()[0] == yard.split()[0] and row.endswith("Row") and yard.endswith("Yard")
+    bidders = out.split("unaffected. ")[1].removesuffix(" bid.").split(" and ")
+    assert len(set(bidders)) == 2 and row.split()[0] not in bidders
+    assert reidentify(f"{yard} is fine, {row} moved; {bidders[1]} won.", mapping) == \
+        "Camden Yard is fine, Camden Row moved; Camden Foods won."
+
+
+def test_shared_head_alone_restores_to_the_real_head():
+    text = "Camden Row and Camden Yard both slipped."
+    [out], mapping = run([text], [[match(text, "Camden Row", "LOCATION"), match(text, "Camden Yard", "LOCATION")]])
+    head = out.split()[0]
+    assert reidentify(f"Both {head} sites slipped.", mapping) == "Both Camden sites slipped."
