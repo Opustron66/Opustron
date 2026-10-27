@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -252,6 +252,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "icalendar" },
     { name = "openai" },
+    { name = "preshed" },
     { name = "presidio-analyzer" },
     { name = "pydantic" },
     { name = "python-dateutil" },
@@ -278,6 +279,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "icalendar", specifier = ">=5.0" },
     { name = "openai", specifier = ">=1.40" },
+    { name = "preshed", specifier = "<3.0.14" },
     { name = "presidio-analyzer", specifier = ">=2.2" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
