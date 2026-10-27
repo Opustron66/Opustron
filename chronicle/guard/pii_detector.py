@@ -110,8 +110,21 @@ _PRESIDIO_ENTITY_TYPES = {
 
 # spaCy tags these as entities in site-ops text ("Tower crane", "ETA"). They are
 # not identifying, and a model shown ORG_3 for "ETA" loses the question's meaning.
-GENERIC_TERMS = frozenset({"tower", "eta", "row", "depot", "site", "crane", "gate", "board"})
-_ACRONYM_RE = re.compile(r"[A-Z]{2,3}")
+GENERIC_TERMS = frozenset({
+    "tower", "eta", "row", "depot", "site", "crane", "gate", "board",
+    # Prompt scaffolding. spaCy tagged the "QUESTION:" label as a PERSON, and replacing that
+    # name everywhere turned every question into "PERSON_8: What is ...".
+    "question", "questions", "evidence", "answer", "answers", "context", "source", "sources",
+    "reference", "references", "note", "notes", "summary", "rules", "instructions",
+    # Never a safe short form of a longer name: "Project Beacon" must not claim "project".
+    "project", "projects", "team", "program", "programme", "operation", "initiative", "squad",
+    "workstream", "the", "new",
+})
+_ACRONYM_RE = re.compile(r"[A-Z][A-Z&]{1,3}")
+# Codenames like "Project Beacon" are not personal data, and spaCy tags them as PERSON,
+# which sent "who leads PERSON_9?" to the model.
+_NON_NAME_HEADS = frozenset({"project", "team", "program", "programme", "operation", "initiative",
+                             "squad", "workstream"})
 
 # Same convention as llm_client's env switches.
 _FALSY = ("0", "false", "no", "off")
@@ -147,12 +160,19 @@ def _is_generic(entity_type: str, value: str) -> bool:
     value = value.strip()
     if value.casefold() in GENERIC_TERMS:
         return True
+    words = value.split()
+    if words and words[0].casefold() in _NON_NAME_HEADS:
+        return True
+    if entity_type == "PERSON" and value.isupper():
+        return True  # people's names are not written in capitals; labels and acronyms are
     return entity_type in ("ORGANIZATION", "LOCATION") and bool(_ACRONYM_RE.fullmatch(value))
 
 
 _NAME_TYPES = frozenset({"PERSON", "ORGANIZATION", "LOCATION", "NRP"})
 # spaCy runs a name into the text after it ("Rohan Dasgupta: +1 jordan", JSON, code).
-_NAME_CUT = re.compile(r"[:\n(=\"{}\[\]]")
+# Also cut lists: "Atlas / Beacon / Compass" and "Alex and Sam" are several names, and as
+# one span they restored as a single run-together name ("src/Atlas / Beacon / Compass/...").
+_NAME_CUT = re.compile(r"[:\n(=\"{}\[\]/|]| and | & ")
 _DIGIT = re.compile(r"\d")
 
 
