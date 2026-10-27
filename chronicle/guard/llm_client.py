@@ -28,6 +28,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import spend_limit
+
 _CACHE_DIR = Path.home() / ".chronicle" / "llm_cache"
 
 # Models
@@ -213,6 +215,7 @@ class LLMClient:
         if cache_hit:
             raw, prompt_tokens, completion_tokens, finish_reason = cached, 0, 0, None
         else:
+            spend_limit.check(get_logger().records)
             raw, prompt_tokens, completion_tokens, finish_reason = self._call_api(
                 redacted_messages, schema, model, temperature, budget
             )

@@ -54,6 +54,10 @@ class EgressLogger:
             with self._path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record) + "\n")
 
+    def records(self) -> list[dict]:  # type: ignore[type-arg]
+        """Every record in the log, oldest first."""
+        return list(reversed(self.tail(n=10**9)))
+
     def tail(self, n: int = 50) -> list[dict]:  # type: ignore[type-arg]
         """Return the last n records from the log, newest first."""
         if not self._path.exists():
