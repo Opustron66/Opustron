@@ -22,6 +22,9 @@ dependencies = [
   # Name/organisation/place detection for the privacy router (chronicle.guard).
   "presidio-analyzer>=2.2",
   "spacy>=3.8,<3.9",
+  # preshed 3.0.14 (Oct 2026) breaks loading en_core_web_sm ("Python int too large to
+  # convert to C ssize_t"), which silently turns name masking off.
+  "preshed<3.0.14",
   "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
   # Memory HTTP API for the UI (chronicle.memory.server).
   "fastapi>=0.115",
