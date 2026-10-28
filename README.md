@@ -385,8 +385,11 @@ later reply that reviews a draft written by the as-of date ("the 30% target is a
 evidence of what the draft said. Dates, deadlines and statuses are given in the evidence's own words
 first ("Mon EOD", "reserved", "Draft until sign-off"), with words that limit them in time ("for now",
 "not yet"). "What is the status of X" lists every status the evidence states. For who holds a role,
-the best-supported person is named, not a team. A change counts as in place once it has started; an
-offer to make it is still a proposal.
+the best-supported person is named from clear indirect evidence too, and the wider second look
+accepts that evidence for role questions ("Rohan Dasgupta from Beacon"). For the current state,
+changes the people involved agreed to count as put in place; for an as-of date only days after the
+offer, they were still a proposal. "Has X been ...?" questions get the same refusal shape as "did X
+happen?".
 
 These came from comparing our own right and wrong answers to the same question across 14 runs,
 using only each run's `correct` flags. Two earlier rules went the wrong way and were removed: "a
@@ -398,8 +401,9 @@ morning" wrong) and "a commitment counts as a step taken" (the as-of answer that
 answer shape: start with the option that holds, in the question's own words, not "Yes." or "No."
 Questions that ask for yes or no are left alone.
 
-**Change over time.** "How did X change over the window: where it started and where it ended" shows
-the evidence in date order and asks for the specific states at each end.
+**Both numbers.** When the question asks for both numbers and the answer gives fewer than two
+figures (beyond any in the question), the answer is asked for once more with "from <before> to
+<after>"; the retry is kept only if it has both.
 
 **Refusal wording, truncated replies.** "The corpus does not confirm" is rewritten to "does not
 record", which the grader recognises as a refusal. A reply that runs out of tokens while thinking is

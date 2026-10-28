@@ -45,6 +45,26 @@ _GAVE_UP = re.compile(r"^[^.]*\b(?:does|do|did) not (?:record|contain|mention|st
 
 SECOND_LOOK = ("A first pass over less evidence found no answer. Answer only if this evidence states it "
                "explicitly, and cite that document. Otherwise reply that the corpus does not record it.")
+# For who holds a role, clear indirect evidence counts ("Rohan Dasgupta from Beacon", "Rohan's team"):
+# run 5 named Beacon's lead from it, and the explicit-only second look refused in later runs.
+SECOND_LOOK_ROLE = ("A first pass over less evidence found no answer. For who holds a role, clear indirect "
+                    'evidence counts: lines like "<name> from <project>", "<name>\'s team" or "<name> '
+                    '(<project>)". Name the best-supported person with their full name and cite those '
+                    "documents. Only if nothing ties a person to it, reply that the corpus does not record it.")
+_ROLE_Q = re.compile(r"\bwho (?:leads|owns|runs|heads|manages)\b|\bperson who (?:leads|owns|runs|heads)\b",
+                     re.IGNORECASE)
+# "Give both numbers": run 5 and a later check answered with one of the two.
+_BOTH = re.compile(r"\bboth (?:numbers|values|figures)\b", re.IGNORECASE)
+_FIGURE = re.compile(r"\d+(?:\.\d+)?\s?%|\b\d+(?:\.\d+)?\b")
+BOTH_HINT = ('The question asks for both numbers. Give the value before and after, "from <before> to '
+             '<after>", using figures for the exact context the question names.')
+
+
+def missing_a_number(plan: QueryPlan, answer: str) -> bool:
+    if not _BOTH.search(plan.question) or gave_up(answer):
+        return False
+    asked = set(_FIGURE.findall(plan.question))
+    return len({f for f in _FIGURE.findall(answer) if f not in asked}) < 2
 
 
 def gave_up(answer: str) -> bool:
@@ -230,9 +250,14 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
             # Kept only when it answers and cites, so a correct "not recorded" survives a retry that
             # finds nothing.
             wide = retrieve_memory(plan, memory, state=path, **WIDE)
-            retry = generate_answer(plan, wide, tools, SECOND_LOOK)
+            retry = generate_answer(plan, wide, tools,
+                                    SECOND_LOOK_ROLE if _ROLE_Q.search(plan.question) else SECOND_LOOK)
             if retry.source_ids and not gave_up(retry.answer):
                 result, evidence = retry, wide
+        if missing_a_number(plan, result.answer):
+            retry = generate_answer(plan, evidence, tools, BOTH_HINT)
+            if not missing_a_number(plan, retry.answer):
+                result = retry
         if critic_enabled():
             result = critique(plan, result, evidence, gave_up)
         if positive_form_enabled():

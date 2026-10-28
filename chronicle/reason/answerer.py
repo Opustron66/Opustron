@@ -173,10 +173,10 @@ ANSWER_FORM = """How to write the answer:
 - When the question names a specific context (a fixture, environment, test, tier or date), use
   only figures stated for that exact context, not similar figures from other tests or later runs.
 - An agenda or plan is not a record of what was discussed or decided at an event.
-- A change counts as in place once it has started (the calendar is blocked, the slot was handed
-  over, the sync moved). An offer or plan to change something ("I'll take over the slot", "she's
-  going to absorb it") is still only proposed on the day it was made. Scheduled events (reviews,
-  launches, cutovers, meetings) need evidence that they happened.
+- For the current state, changes the people involved agreed to ("I'll take over the slot", "we're
+  collapsing the sync to biweekly") count as put in place. For an as-of date only days after such
+  an offer, it was still a proposal unless the evidence shows it had started. Scheduled events
+  (reviews, launches, cutovers, meetings) need evidence that they happened.
 - Give dates, deadlines and statuses in the evidence's own words first ("Mon EOD", "reserved",
   "Draft until sign-off"), then the computed date if useful ("Mon EOD (2026-05-25)"). Keep words
   that limit a value in time next to it ("duplicated for now", "not yet", "until the cutover").
@@ -185,7 +185,6 @@ ANSWER_FORM = """How to write the answer:
 - For who holds a role, answer from clear indirect evidence too: if documents tie a person to a
   role or project ("Priya's team" builds Orion; Priya added Orion's registry), name the
   best-supported person with their full name rather than saying the corpus does not record it.
-  Name a person rather than a team or workstream when the evidence ties one to it.
 - "Who proposed / suggested / raised X" is the first person who suggested it, even as a question
   ("worth porting to Atlas?"); approving, assigning or later repeating it is not proposing.
 - When the corpus does not record what was asked, say "The corpus does not record <it>." and
@@ -279,17 +278,13 @@ class Tools:
 
 _CHAIN = re.compile(r"\bin between\b|more than once", re.IGNORECASE)
 _ORDER = re.compile(r"\bin the order\b|earliest first|\border they happened\b", re.IGNORECASE)
-_OUTCOME = re.compile(r"^\s*(how did|how was|what was the outcome|did)\b|\bwhat was (discussed|decided|announced)\b"
+_OUTCOME = re.compile(r"^\s*(how did|how was|what was the outcome|did)\b|^\s*(?:has|have)\b.{0,80}\bbeen\b|\bwhat was (discussed|decided|announced)\b"
                       r"|\bwhat (were the findings|did .{1,60} conclude)\b", re.IGNORECASE)
 _TWO = re.compile(r"\b(two different|are different|is that right)\b", re.IGNORECASE)
 # "Had anything been done about X, or was it still an open problem?": the grader matches the option
 # in the question's own words. Our answers that said "still an open problem" or "Mitigations have
 # been put in place" were scored right; "No." and "Mitigations have been committed" were not.
 _EITHER = re.compile(r",\s*or\s+(?:was|were|is|are|has|have|had|did|does|do)\b", re.IGNORECASE)
-# "Describe how Beacon's state changed over the corpus window: where it started and where it ended."
-# Its documents are shown in date order so both ends of the story are easy to find.
-_WINDOW = re.compile(r"\bwhere it (?:started|ended)\b|\bover the (?:corpus )?(?:window|period)\b"
-                     r"|\bhow .{0,60}\bchanged\b", re.IGNORECASE)
 _YES_NO_ASKED = re.compile(r"\banswer (?:with )?(?:yes|no)\b|\byes \(|\byes or no\b", re.IGNORECASE)
 
 
@@ -299,11 +294,6 @@ def answer_template(plan: QueryPlan) -> str:
     if _CHAIN.search(q):
         return ('Answer shape: "In between: <value it held between the first and the latest>; now: '
                 '<latest value>." Give each value exactly as the documents state it.')
-    if _WINDOW.search(q):
-        return ("Answer shape: the documents are in date order. \"Started (<month>): <every specific "
-                "state in the earliest documents about it>. Ended (<month>): <every specific state in the "
-                'latest documents: milestones, changes, what it was working on>." Name concrete facts '
-                "with dates, not summaries.")
     if _ORDER.search(q):
         return "Answer shape: the items, earliest first, one per line, using the question's wording."
     if _TWO.search(q):
@@ -321,8 +311,6 @@ def answer_template(plan: QueryPlan) -> str:
 
 def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last: bool, note: str = "",
               hint: str = "") -> list[dict]:
-    if _WINDOW.search(plan.question):
-        evidence = sorted(evidence, key=lambda e: e.date or "")
     context = "\n\n".join(_render(e) for e in evidence)
     reference = f"Answer as of {plan.reference_date.isoformat()}.\n\n" if plan.reference_date else ""
     if plan.reference_date and any(e.kind == "later" for e in evidence):

@@ -160,3 +160,19 @@ def test_a_reply_truncated_twice_is_asked_once_more_with_thinking_off():
     with patch("chronicle.reason.answerer.llm.complete", side_effect=replies) as complete:
         assert generate_answer(QueryPlan("Who proposed it?"), [Evidence("S:1", "Rohan Dasgupta")]).answer == "Rohan Dasgupta."
     assert complete.call_count == 3 and complete.call_args.kwargs["thinking"] is False
+
+
+@pytest.mark.parametrize("answer,missing", [
+    ("94%.", True),
+    ("From 71% to 94%.", False),
+    ("The corpus does not record it.", False),
+])
+def test_both_numbers_questions_need_two_figures_beyond_the_question(answer, missing):
+    plan = QueryPlan("What did MR !521 do to the cache hit rate on the smoke fixture? Give both numbers.")
+    assert pipeline.missing_a_number(plan, answer) is missing
+    assert not pipeline.missing_a_number(QueryPlan("What was the hit rate?"), "94%.")
+
+
+def test_has_it_been_questions_get_the_refusal_shape():
+    from chronicle.reason.answerer import answer_template
+    assert "does not record it" in answer_template(QueryPlan("Has merge request !342 been opened and reviewed?"))

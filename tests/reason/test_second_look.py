@@ -35,7 +35,7 @@ def test_second_look_replaces_a_give_up_that_it_can_answer_with_a_citation(monke
                                  AnswerResult("Rohan Dasgupta.", ["E:one"]), monkeypatch)
     assert result == AnswerResult("Rohan Dasgupta.", ["E:one"])
     assert calls[1]["budget"] == pipeline.WIDE["budget"] > 40_000
-    assert answer.call_args.args[3] == pipeline.SECOND_LOOK
+    assert answer.call_args.args[3] == pipeline.SECOND_LOOK_ROLE  # a who-leads question
 
 
 @pytest.mark.parametrize("retry", [AnswerResult("Rohan Dasgupta.", []),
