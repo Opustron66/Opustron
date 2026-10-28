@@ -69,7 +69,7 @@ def test_max_tokens_configurable(monkeypatch):
                                                                        max_tokens=50)
     monkeypatch.setenv("CHRONICLE_MAX_TOKENS", "4096")
     LLMClient(transport=t, use_cache=False).complete([{"role": "user", "content": "d"}])
-    assert [c["max_tokens"] for c in t.calls] == [1024, 8192, 50, 4096]
+    assert [c["max_tokens"] for c in t.calls] == [llm_client.DEFAULT_MAX_TOKENS, 8192, 50, 4096]
 
 
 def test_schema_rejection_falls_back_and_sticks():
@@ -245,3 +245,20 @@ def test_placeholder_note_is_added_only_when_names_were_replaced(monkeypatch):
     assert with_placeholder_note(named[1:])[0] == {"role": "system", "content": PLACEHOLDER_NOTE}
     monkeypatch.setenv("CHRONICLE_PLACEHOLDER_NOTE", "off")
     assert with_placeholder_note(named) == named
+
+
+def test_benchmark_proxy_gets_uncompressed_replies(monkeypatch):
+    import openai
+    seen = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kw):
+            seen.update(kw)
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=lambda **k: reply("ok")))
+
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+    LLMClient(api_key="k", base_url="http://127.0.0.1:54321/v1", use_cache=False).complete([{"role": "user", "content": "hi"}])
+    assert seen["default_headers"] == {"Accept-Encoding": "identity"}
+    seen.clear()
+    LLMClient(api_key="k", base_url="https://api.tokenfactory.nebius.com/v1/", use_cache=False).complete([{"role": "user", "content": "hi"}])
+    assert "default_headers" not in seen

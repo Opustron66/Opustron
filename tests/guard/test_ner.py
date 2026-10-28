@@ -131,3 +131,27 @@ def test_name_spans_are_cut_at_speaker_separators():
     assert _clean_name("PERSON", 0, 25, "Rohan Dasgupta: +1 jordan") == (0, 14, "Rohan Dasgupta")
     assert _clean_name("ORGANIZATION", 5, 10, "Q4 KR") is None
     assert _clean_name("EMAIL_ADDRESS", 0, 9, "a@b.co x1") == (0, 9, "a@b.co x1")
+
+
+# Regressions from benchmark run 1 (corpus A): masking bugs that garbled the answer prompt.
+
+def test_prompt_labels_are_never_names():
+    redacted, _ = pseudonymize("EVIDENCE:\nAlice Tan owns payments.\n\nQUESTION: Who owns payments?")
+    assert "QUESTION: Who owns payments?" in redacted
+    assert redacted.startswith("EVIDENCE:")
+
+
+def test_all_caps_words_are_not_people():
+    assert not [m for m in detect("REVIEW NOTES from the WAVE sync") if m.entity_type == "PERSON"]
+
+
+def test_project_codenames_keep_their_prefix_and_never_claim_project():
+    redacted, mapping = pseudonymize("Project Beacon shipped. Who leads Project Beacon? The project slipped.")
+    assert "Project" in redacted and "The project slipped." in redacted
+    assert "project" not in mapping._aliases
+
+
+def test_lists_of_names_split_into_separate_entities():
+    found = [m.value for m in detect("After Alex Chen and Sam Ortiz negotiated it, the RFC changed.")]
+    assert "Alex Chen and Sam Ortiz" not in found
+    assert not any("/" in v for v in [m.value for m in detect("see src/Atlas / Beacon / Compass/stores")])

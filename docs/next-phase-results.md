@@ -114,4 +114,41 @@ Caveats:
   unchanged (everything masked).
 - Tests: `tests/guard/test_pseudonymizer.py`, `test_ner.py`, `test_response_cache.py`.
 
+### Follow-up (25 Oct): closing the redaction gap
+
+Redaction costs about 5 points (0.922 off vs 0.871 on, corpus A, Ultra), almost all of it at
+answer time. Built and unit-tested, **not yet benchmarked** (no working key):
+
+- **Stand-in names, `CHRONICLE_PSEUDONYMS=surrogate`** (`pseudonymizer.py`). The model sees
+  "Jordan Okafor" instead of `PERSON_1`, and "Alderbrook Depot" instead of `LOC_1` (generic words
+  like Depot or Row are kept). Published comparisons report realistic surrogates keep noticeably
+  more task utility than placeholder tags (e.g. BERTScore 94.9% vs 81.6% in the SurrogateShield
+  preprint), and tokens are what our answer stage struggles with. Stand-ins are gender-neutral,
+  are not ordinary English words, never reuse a word from the request, and restore to the real
+  name (a stand-in first name alone restores to the real first name). Emails, phones and IDs keep
+  tokens. No placeholder note is added in this mode. Default unchanged (tokens).
+- **Less over-masking.** A single-word organisation or place now masks only as detected
+  ("Grace" → hidden, but "grace period" stays). People still mask in any case, so lowercase chat
+  mentions stay hidden.
+- **Defaults** (`llm_client.py`): `DEV_MODEL = nvidia/Nemotron-3_5-Lightning`,
+  `PROD_MODEL = nvidia/Nemotron-3-Ultra-550b-a55b`, `DEFAULT_MAX_TOKENS = 16384` (was a placeholder
+  model id and 1024, which empties reasoning replies).
+- **Egress log** records `cached: true` for cache hits, and the UI shows them as "cache · not sent",
+  so the panel no longer counts cache hits as traffic.
+- Tests: `tests/guard/test_surrogates.py`, plus additions to `test_response_cache.py` and the UI.
+
+**Run plan once a key works** (check it for free first with the `curl .../v1/models` command in
+the hand-off; use promo credits with no card attached, because Token Factory has no hard cap):
+
+1. **Redaction-on headline, corpus A, Ultra, 2 fresh trials** (`CHRONICLE_LLM_CACHE=off`). This
+   replaces the invalid `final-t*-a-ultra-on` runs and is the number the privacy story needs.
+2. **Same with `CHRONICLE_PSEUDONYMS=surrogate`.** The gap is at answer time, so an answer-only run
+   on the redaction-on ingest state is enough (as for the placeholder-note row) and much cheaper
+   than a full run. `REF` must include this change. Make stand-ins the default if they beat tokens
+   by 2+ points across 2 trials.
+3. Only if time allows: the Lightning re-runs (~8 h per corpus A run).
+
+Also worth checking on the first run: why the proxy reports no usage. The benchmark marks such
+runs invalid on cost, which judges may notice even though scores are unaffected.
+
 <!-- REDACTION -->

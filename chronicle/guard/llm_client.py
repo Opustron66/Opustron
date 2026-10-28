@@ -28,13 +28,17 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import spend_limit
+
 _CACHE_DIR = Path.home() / ".chronicle" / "llm_cache"
 
 # Models
-DEV_MODEL = "nvidia/nemotron-mini-4b-instruct"   # cheap, fast
-PROD_MODEL = "nvidia/nemotron-4-340b-instruct"    # official benchmark runs
+# Token Factory ids, as used in the team's live runs (Oct 2026).
+DEV_MODEL = "nvidia/Nemotron-3_5-Lightning"        # cheap, fast
+PROD_MODEL = "nvidia/Nemotron-3-Ultra-550b-a55b"    # official benchmark runs
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
-DEFAULT_MAX_TOKENS = 1024  # reasoning models (Nemotron) need 8192–32768: set max_tokens or CHRONICLE_MAX_TOKENS
+# Reasoning tokens count toward max_tokens, so a small cap returns empty or truncated replies.
+DEFAULT_MAX_TOKENS = 16384
 
 # HTTP statuses an OpenAI-compatible endpoint returns when it rejects response_format
 _SCHEMA_REJECTED_STATUSES = (400, 422)
@@ -211,6 +215,7 @@ class LLMClient:
         if cache_hit:
             raw, prompt_tokens, completion_tokens, finish_reason = cached, 0, 0, None
         else:
+            spend_limit.check(get_logger().records)
             raw, prompt_tokens, completion_tokens, finish_reason = self._call_api(
                 redacted_messages, schema, model, temperature, budget
             )
@@ -227,6 +232,7 @@ class LLMClient:
             redacted=mapping is not None and bool(mapping.pii_types_seen()),
             pii_types=mapping.pii_types_seen() if mapping else [],
             request_preview=redacted_messages[-1]["content"][:200] if redacted_messages else "",
+            cached=cache_hit,
         )
 
         if finish_reason in ("length", "content_filter"):
@@ -302,6 +308,11 @@ class LLMClient:
                                           "max_retries": 2}
                 if self._timeout is not None:
                     kwargs["timeout"] = self._timeout
+                if _LOOPBACK.match(self._base_url):
+                    # The benchmark's accounting proxy reads token usage from plain JSON and
+                    # cannot parse gzip, which Token Factory sends when allowed; without this
+                    # every run is marked "not comparable on cost".
+                    kwargs["default_headers"] = {"Accept-Encoding": "identity"}
                 self._transport = OpenAI(**kwargs).chat.completions.create
             return self._transport
 

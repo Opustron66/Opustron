@@ -26,9 +26,10 @@ from .models import Evidence, QueryPlan
 from .planner import lexical_query
 
 DOCS_FILE = "docs.jsonl"
-CLAIM_K, TOPIC_K, ENTITY_K, CHUNK_K = 25, 6, 2, 12
-# About 7k tokens of evidence.
-CHAR_BUDGET = 28_000
+CLAIM_K, TOPIC_K, ENTITY_K, CHUNK_K = 25, 6, 2, 16
+# About 10k tokens of evidence: at 7k, questions that list every instance of something ("how many
+# security reviews") saw only one of them.
+CHAR_BUDGET = 40_000
 _ENTRY = re.compile(r"^- (\d{4}-\d{2}-\d{2}) \[[^\]]+\]: (.*?)(?: \(effective [^)]*\))? \| ")
 
 
@@ -138,7 +139,7 @@ def _key(e: Evidence) -> str:
     return f"{e.kind}|{e.doc_id}|{e.text[:80]}"
 
 
-SECTION_ORDER = {"topic": 0, "entity": 1, "claim": 2, "chunk": 3}
+SECTION_ORDER = {"topic": 0, "entity": 1, "claim": 2, "chunk": 3, "later": 4}
 
 
 def fuse(channels: list[list[Evidence]], budget: int = CHAR_BUDGET) -> list[Evidence]:
@@ -160,17 +161,40 @@ def fuse(channels: list[list[Evidence]], budget: int = CHAR_BUDGET) -> list[Evid
     return sorted(chosen, key=lambda e: (SECTION_ORDER.get(e.kind, 9), -e.score))
 
 
+LATER_K = 4
+LATER_BUDGET = 4_000
+
+
+def retrieve_later(plan: QueryPlan, chunks: list[Chunk]) -> list[Evidence]:
+    """For an as-of question, a few documents written after the as-of date, in their own section.
+
+    Everything else is cut at the date, so "had Beacon reached 50% by 2026-05-10?" saw nothing
+    about the milestone and answered "not recorded" instead of "no, it reached 50% on 05-14"."""
+    ref = _as_of(plan)
+    if ref is None:
+        return []
+    ranked = rank_chunks(chunks, search_query(plan), k=LATER_K * 5)
+    later = [(c, s) for c, s in ranked if (c.date or "")[:10] > ref.isoformat()][:LATER_K]
+    return [Evidence(c.doc_id, c.text, c.date or "", s, kind="later") for c, s in later]
+
+
 def retrieve_memory(plan: QueryPlan, memory: MemoryAPI, top_k: int = CLAIM_K,
-                    state: Path | None = None) -> list[Evidence]:
+                    state: Path | None = None, *, budget: int = CHAR_BUDGET,
+                    chunk_k: int = CHUNK_K, topic_k: int = TOPIC_K) -> list[Evidence]:
     if state is None and memory.database.path != ":memory:":
         state = Path(memory.database.path).parent
+    chunks = load_chunks(state)
     channels = [
-        retrieve_pages(plan, memory, "topic", TOPIC_K),
+        retrieve_pages(plan, memory, "topic", topic_k),
         retrieve_pages(plan, memory, "entity", ENTITY_K),
         retrieve_claims(plan, memory, top_k),
-        retrieve_chunks(plan, load_chunks(state)),
+        retrieve_chunks(plan, chunks, chunk_k),
     ]
-    return fuse(channels)
+    return fuse(channels, budget=budget) + fuse([retrieve_later(plan, chunks)], budget=LATER_BUDGET)
+
+
+# The second look: when the first answer found nothing, about 25k tokens of evidence instead of 10k.
+WIDE = {"top_k": 60, "budget": 100_000, "chunk_k": 40, "topic_k": 12}
 
 
 SEARCH_BUDGET = 10_000
@@ -207,6 +231,17 @@ def open_documents(plan: QueryPlan, memory: MemoryAPI, doc_ids: list[str], state
         if row["doc_id"] in wanted and (ref is None or (row.get("date") or "") <= ref.isoformat()):
             out.append(Evidence(row["doc_id"], row["text"], row.get("date") or "", 0.0, kind="chunk"))
     return out
+
+
+def corpus_evidence(state: Path | None) -> list[Evidence]:
+    """Every source document, oldest first, for whole-corpus answering. Not cut at an as-of date:
+    the corpus is the same prefix for every question, so the provider can cache it."""
+    path = state / DOCS_FILE if state is not None else None
+    if path is None or not path.is_file():
+        return []
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows.sort(key=lambda r: (r.get("date") or "", r["doc_id"]))
+    return [Evidence(r["doc_id"], r["text"], r.get("date") or "", 0.0, kind="chunk") for r in rows]
 
 
 def open_state(state: str | Path) -> MemoryAPI:

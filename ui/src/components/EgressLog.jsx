@@ -55,9 +55,17 @@ export default function EgressLog() {
           <p className="egress-empty">Nothing has left this machine yet.</p>
         )}
         {entries.map((e, i) => (
-          <div key={`${e.ts}-${i}`} className={`egress-entry ${e.redacted ? "egress-redacted" : "egress-clean"}`}>
+          <div
+            key={`${e.ts}-${i}`}
+            className={`egress-entry ${e.redacted ? "egress-redacted" : "egress-clean"}${e.cached ? " egress-cached" : ""}`}
+          >
             <span className="egress-ts">{fmtTs(e.ts)}</span>
             <span className="egress-provider">{destination(e)}</span>
+            {e.cached && (
+              <span className="egress-badge cached" title="Answered from the local cache; nothing was sent">
+                ↺ cache · not sent
+              </span>
+            )}
             {e.redacted ? (
               <span className="egress-badge redacted">🔒 redacted</span>
             ) : (
