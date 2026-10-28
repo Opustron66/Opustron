@@ -55,6 +55,12 @@ def claims(answer: str, question: str) -> list[str]:
     return list(dict.fromkeys(c for c in found if norm(c) not in asked))
 
 
+def found_anywhere(parts: list[str], evidence_texts: list[str]) -> list[str]:
+    """The ``parts`` that occur somewhere in the evidence, quoted or not."""
+    haystack = norm("\n".join(evidence_texts))
+    return [p for p in parts if norm(p) in haystack]
+
+
 def unsupported(answer: str, support, question: str, evidence_texts: list[str]) -> list[str]:
     """Claims in ``answer`` that no verified quote in ``support`` contains. Refusals need none."""
     if not answer.strip() or _GAVE_UP.search(answer):

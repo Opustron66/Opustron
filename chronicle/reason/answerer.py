@@ -4,6 +4,7 @@ With ``tools`` the answerer is agentic: for up to ``MAX_ROUNDS`` model calls it 
 evidence (``search`` with new queries, or ``open`` a full source document) before answering, and
 the last round must answer. Without tools it answers in one call.
 """
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -68,9 +69,69 @@ _TIMELINE_Q = re.compile(
     re.IGNORECASE)
 
 
+def timeline_enabled() -> bool:
+    """CHRONICLE_TIMELINE=1: timeline-first answers. Off by default: on corpus A it fixed nothing
+    and turned one as-of answer into a refusal."""
+    return os.environ.get("CHRONICLE_TIMELINE", "0").lower() in ("1", "true", "yes", "on")
+
+
 def needs_timeline(plan: QueryPlan) -> bool:
     """State-over-time questions: as-of, history, and "has anything been done / how did it change"."""
+    if not timeline_enabled():
+        return False
     return plan.kind == "as_of" or plan.question_type == "history" or bool(_TIMELINE_Q.search(plan.question))
+
+
+# Question phrases repeated verbatim in the evidence. Run 5 answered "the prompt-prefix cache hit
+# rate on the smoke fixture" with figures from a later smoke test; only one line in the evidence
+# said "smoke fixture". Lines that repeat the question's rarer two-word phrases are listed first.
+_TOKEN = re.compile(r"[a-z0-9][a-z0-9'%!-]*")
+_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+_PHRASE_STOP = frozenset(
+    "a an the of on in at to for by from with and or but is are was were be been has had have do does did "
+    "what which who whom when where why how that this these those it its as into about than then there "
+    "their they them he she his her you your we our any all each both give name describe yes no not".split())
+KEY_LINES = 4
+MAX_PHRASE_DF = 3
+MAX_LINE = 400
+
+
+def _lines(text: str) -> list[str]:
+    """Whole lines (a chat message, a timeline entry); a long paragraph is cut into sentences."""
+    out = []
+    for line in text.splitlines():
+        out += [line] if len(line) <= MAX_LINE else _SENTENCE.split(line)
+    return [x.strip() for x in out if 20 <= len(x.strip()) <= MAX_LINE and not x.lstrip().startswith("TOPIC:")]
+
+
+def _phrases(text: str) -> set[str]:
+    words = _TOKEN.findall(text.lower())
+    return {f"{a} {b}" for a, b in zip(words, words[1:]) if a not in _PHRASE_STOP and b not in _PHRASE_STOP}
+
+
+def key_lines(question: str, evidence: list[Evidence]) -> list[str]:
+    """Up to ``KEY_LINES`` evidence lines that share a rare two-word phrase with the question,
+    rarest match first, each tagged with its document id."""
+    asked = _phrases(question)
+    if not asked:
+        return []
+    lines = []
+    for e in evidence:
+        for line in _lines(e.text):
+            if found := asked & _phrases(line):
+                lines.append((e.doc_id, line, found))
+    # Rarity counts documents, not lines: a topic, a fact and a chunk can all quote one sentence.
+    df = {p: len({doc_id for doc_id, _, found in lines if p in found}) for p in asked}
+    scored = {}
+    for doc_id, line, found in lines:
+        if line not in scored and any(df[p] <= MAX_PHRASE_DF for p in found):
+            scored[line] = (sum(1 / df[p] for p in found), doc_id)
+    ranked = sorted(scored.items(), key=lambda item: -item[1][0])[:KEY_LINES]
+    return [f"[{doc_id}] {line}" for line, (_, doc_id) in ranked]
+
+
+def key_lines_enabled() -> bool:
+    return os.environ.get("CHRONICLE_KEY_LINES", "1").lower() not in ("0", "false", "no", "off")
 
 FALLBACK_CONTRACT = """Answer the question from the memory you built out of the corpus.
 Rules:
@@ -114,6 +175,10 @@ ANSWER_FORM = """How to write the answer:
   slot", "we're moving the sync to biweekly"), especially once the others agree, counts as a step
   taken: list it as in place. This does not apply to scheduled events (reviews, launches,
   cutovers, meetings): those still need evidence that they happened.
+- When a later message in the same thread moves or restates a deadline or time ("send it Mon
+  morning" after "by Mon EOD"), give the latest one.
+- "Who proposed / suggested / raised X" is the first person who suggested it, even as a question
+  ("worth porting to Atlas?"); approving, assigning or later repeating it is not proposing.
 - When the corpus does not record what was asked, say "The corpus does not record <it>." and
   describe no outcome."""
 
@@ -242,6 +307,9 @@ def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last:
     if template := answer_template(plan):
         system += f"\n\n{template}"
     user = f"{reference}EVIDENCE:\n{context}\n\nQUESTION: {plan.question}"
+    if key_lines_enabled() and (lines := key_lines(plan.question, evidence)):
+        user += ("\n\nEvidence lines that repeat the question's own wording (when the question names a "
+                 "specific context, its figures are usually here):\n" + "\n".join(f"- {x}" for x in lines))
     if hint:
         user += f"\n\n{hint}"
     if agentic:

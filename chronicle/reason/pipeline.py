@@ -10,6 +10,7 @@ from chronicle.memory import MemoryAPI
 
 from .abstention import should_abstain
 from .answerer import Tools, answer_template, generate_answer, generate_corpus_answer
+from .grounding import found_anywhere
 from .models import AnswerResult, QueryPlan
 from .planner import plan_query, understand
 from .retriever import (
@@ -73,16 +74,25 @@ def grounding_enabled() -> bool:
 
 def recheck_hint(missing: list[str]) -> str:
     return ("Check your previous answer: these parts were not backed by a quote copied word for word from "
-            f"the evidence: {', '.join(missing[:8])}. Re-read the evidence. Correct or remove each one, and "
-            "quote the exact lines that support what you keep. If nothing supports an answer, say the corpus "
-            "does not record it.")
+            f"the evidence: {', '.join(missing[:8])}. Re-read the evidence. Answer the same question: keep "
+            "each part the evidence supports and quote the exact lines for it, and correct any part it "
+            "contradicts. Only if the evidence does not support an answer at all, say the corpus does "
+            "not record it.")
 
 
-def recheck(plan: QueryPlan, result: AnswerResult, again: Callable[[str], AnswerResult]) -> AnswerResult:
-    """One correction pass for an answer with unsupported names/numbers; the better-backed one stays."""
+def recheck(plan: QueryPlan, result: AnswerResult, again: Callable[[str], AnswerResult],
+            evidence_texts: list[str] = ()) -> AnswerResult:
+    """One correction pass for an answer with unsupported names/numbers; the better-backed one stays.
+    A refusal replaces an answer only when none of its unsupported parts occur anywhere in the
+    evidence: on corpus A a retry turned a right "30% reduction target" (30% was in the evidence,
+    just not quoted) into "the corpus does not record", and correctly refused a made-up status."""
     if not result.unsupported or gave_up(result.answer):
         return result
     retry = again(recheck_hint(result.unsupported))
+    if not retry.answer.strip():
+        return result
+    if gave_up(retry.answer):
+        return retry if not found_anywhere(result.unsupported, evidence_texts) else result
     return retry if len(retry.unsupported) < len(result.unsupported) else result
 
 
@@ -186,7 +196,8 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
         if vote_enabled() and is_hard(plan):
             result = vote(result, lambda t: generate_answer(plan, evidence, tools, temperature=t))
         if grounding_enabled():
-            result = recheck(plan, result, lambda hint: generate_answer(plan, evidence, tools, hint))
+            result = recheck(plan, result, lambda hint: generate_answer(plan, evidence, tools, hint),
+                             [e.text for e in evidence])
         if gave_up(result.answer) and second_look_enabled():
             # Kept only when it answers and cites, so a correct "not recorded" survives a retry that
             # finds nothing.

@@ -9,6 +9,7 @@ from chronicle.reason.answerer import (
     TIMELINE_SCHEMA,
     _messages,
     generate_answer,
+    key_lines,
     needs_timeline,
 )
 from chronicle.reason.grounding import claims, unsupported
@@ -65,6 +66,16 @@ def test_recheck_asks_once_and_keeps_the_better_backed_answer():
     assert pipeline.recheck(QueryPlan("Who?"), bad, lambda h: worse) == bad
 
 
+def test_a_refusal_replaces_an_answer_only_when_its_claims_are_nowhere_in_the_evidence():
+    refusal = AnswerResult("The corpus does not record it.", [])
+    right = AnswerResult("30% reduction target.", ["E:1"], unsupported=["30%"])
+    evidence = ["RFC v2 draft: cost-reduction target 30%"]
+    assert pipeline.recheck(QueryPlan("What target?"), right, lambda h: refusal, evidence) == right
+    made_up = AnswerResult("ready to merge", ["E:1"], unsupported=["ready"])
+    assert pipeline.recheck(QueryPlan("Has !342 been reviewed?"), made_up, lambda h: refusal,
+                            ["the URL for !342 is reserved"]) == refusal
+
+
 def test_backed_answers_and_refusals_are_not_rechecked():
     called = []
     ok = AnswerResult("Rohan Dasgupta.", ["E:1"])
@@ -80,13 +91,21 @@ def test_backed_answers_and_refusals_are_not_rechecked():
     (QueryPlan("Who owned billing?", kind="as_of", reference_date=date(2026, 6, 9)), True),
     (QueryPlan("What is the GitLab project path for Atlas?"), False),
 ])
-def test_state_over_time_questions_get_the_timeline(plan, expected):
+def test_state_over_time_questions_get_the_timeline(plan, expected, monkeypatch):
+    monkeypatch.setenv("CHRONICLE_TIMELINE", "1")
     assert needs_timeline(plan) is expected
     system = _messages(plan, [Evidence("E:1", "x")], agentic=False, last=True)[0]["content"]
     assert ("Timeline first" in system) is expected
 
 
-def test_timeline_questions_use_the_timeline_schema_with_timeline_before_answer():
+def test_timeline_is_off_by_default():
+    plan = QueryPlan("Who owned billing?", kind="as_of", reference_date=date(2026, 6, 9))
+    assert not needs_timeline(plan)
+    assert "Timeline first" not in _messages(plan, [Evidence("E:1", "x")], agentic=False, last=True)[0]["content"]
+
+
+def test_timeline_questions_use_the_timeline_schema_with_timeline_before_answer(monkeypatch):
+    monkeypatch.setenv("CHRONICLE_TIMELINE", "1")
     assert list(TIMELINE_SCHEMA["properties"])[:2] == ["timeline", "answer"]
     plan = QueryPlan("Describe how Beacon's state changed over the corpus window.")
     with patch("chronicle.reason.answerer.llm.complete", return_value={"answer": "x", "source_ids": []}) as complete:
@@ -95,3 +114,23 @@ def test_timeline_questions_use_the_timeline_schema_with_timeline_before_answer(
     with patch("chronicle.reason.answerer.llm.complete", return_value={"answer": "x", "source_ids": []}) as complete:
         generate_answer(QueryPlan("Who owns payments?"), [Evidence("E:1", "x")])
     assert complete.call_args.kwargs["schema"] == ANSWER_SCHEMA
+
+
+def test_key_lines_pick_the_rare_phrase_the_question_repeats():
+    evidence = [Evidence("E:1", "MR !521: cache hit rate on the smoke fixture goes from 71% to 94%."),
+                Evidence("S:1", "2h into the smoke test, cache hit rate climbed from 94% to 99.2%"),
+                Evidence("S:2", "cache hit rate dashboard is up"), Evidence("S:3", "cache hit rate alerts"),
+                Evidence("S:4", "cache hit rate is noisy today")]
+    lines = key_lines("What did MR !521 do to the cache hit rate on the smoke fixture?", evidence)
+    assert lines[0].startswith("[E:1]") and "71% to 94%" in lines[0]
+    assert key_lines("Who is it?", evidence) == []
+
+
+def test_key_lines_reach_the_prompt(monkeypatch):
+    plan = QueryPlan("What did MR !521 do to the hit rate on the smoke fixture?")
+    user = _messages(plan, [Evidence("E:1", "hit rate on the smoke fixture goes from 71% to 94%.")],
+                     agentic=False, last=True)[1]["content"]
+    assert "repeat the question's own wording" in user and "- [E:1]" in user
+    monkeypatch.setenv("CHRONICLE_KEY_LINES", "0")
+    user = _messages(plan, [Evidence("E:1", "x on the smoke fixture")], agentic=False, last=True)[1]["content"]
+    assert "own wording" not in user

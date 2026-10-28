@@ -53,6 +53,8 @@ set -a; source .env; set +a
 | `CHRONICLE_SECOND_LOOK` | `off` disables the wider retry for answers that say the corpus is silent. Unset = on |
 | `CHRONICLE_VOTE` | `1` (set by the benchmark adapter) answers flip-prone questions (yes/no, "which one", "how many", as-of) up to three times and keeps the majority. Unset = off |
 | `CHRONICLE_POSITIVE_FORM` | `1` (set by the benchmark adapter) rewrites an answer whose first sentence puts the value next to "not", "rather than" etc., so the value is stated on its own. Unset = off |
+| `CHRONICLE_KEY_LINES` | `off` drops the list of evidence lines that repeat the question's wording. Unset = on |
+| `CHRONICLE_TIMELINE` | `1` answers state-over-time questions timeline first. Unset = off |
 | `CHRONICLE_GROUNDING` | `off` skips the quote check (each answer quotes evidence for its names and numbers; unbacked ones get one correction pass). Unset = on |
 | `CHRONICLE_FULL_CORPUS` | `1` answers every question over the whole corpus (all documents, oldest first) instead of retrieved evidence; for corpora that fit the model context. Unset = off |
 
@@ -365,12 +367,26 @@ does not. The model had answered one deadline as 23, 24 and 25 May in different 
 really occurs in the evidence, then that every name, merge request number, percentage or
 multi-digit number, and a short answer's own words, appear in a verified quote. Anything left over
 sends the answer back once with the list ("these parts were not backed by a quote"); the
-better-backed answer is kept. Run 5 had answered "ready to merge" for a reserved placeholder MR.
+better-backed answer is kept. A retry that refuses replaces the answer only when none of the
+unbacked parts occur anywhere in the evidence (made up, not just unquoted). Run 5 had answered
+"ready to merge" for a reserved placeholder MR; an earlier version of this check also turned a
+right "30% reduction target" into a refusal because the model had not quoted the 30%.
 
-**Timeline first for state over time.** As-of questions, history questions and ones like "how did
+**Key lines.** Before the question, the prompt lists up to four evidence lines that repeat one of
+the question's rarer two-word phrases ("smoke fixture", "meeting load"), rarest first, with their
+document ids. Rarity counts documents, not lines. Run 5 answered the cache hit rate "on the smoke
+fixture" with figures from a later smoke test, and missed a one-line DM saying a meeting-load fix
+had been agreed. `CHRONICLE_KEY_LINES=off` turns it off.
+
+**Two answer rules from run-5 misses.** When a later message in the same thread moves a deadline
+("send it Mon morning" after "by Mon EOD"), the latest one is the answer. "Who proposed X" is the
+first person who suggested it, even as a question, not whoever approved it.
+
+**Timeline first for state over time (off by default, `CHRONICLE_TIMELINE=1`).** As-of questions, history questions and ones like "how did
 X change" or "have mitigations been put in place?" use a schema whose first field is `timeline`:
 dated events about the subject, oldest first, each marked stated, proposed, decided, scheduled or
-done. The answer is then read off that timeline (the Chain-of-Note idea from LongMemEval).
+done. The answer is then read off that timeline (the Chain-of-Note idea from LongMemEval). On a
+39-question check it fixed nothing and turned one as-of answer into a refusal, so it is off.
 
 **Whole-corpus answering (experiment).** `CHRONICLE_FULL_CORPUS=1` skips retrieval and gives the
 model every document, oldest first, in one prompt (corpus A is about 120k tokens; Nemotron Ultra
