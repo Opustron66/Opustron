@@ -55,6 +55,10 @@ _ROLE_Q = re.compile(r"\bwho (?:leads|owns|runs|heads|manages)\b|\bperson who (?
                      re.IGNORECASE)
 # "Give both numbers": run 5 and a later check answered with one of the two.
 _BOTH = re.compile(r"\bboth (?:numbers|values|figures)\b", re.IGNORECASE)
+_PERCENT = re.compile(r"\d+(?:\.\d+)?\s?%")
+# Dates, times and "24h"-style durations are not the figures asked for: a check answered "99.1% as
+# of the 24h smoke test on 2026-05-26" and passed as two numbers.
+_NOT_A_FIGURE = re.compile(r"\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}|\b\d+[a-z]+\b|![0-9]+", re.IGNORECASE)
 _FIGURE = re.compile(r"\d+(?:\.\d+)?\s?%|\b\d+(?:\.\d+)?\b")
 BOTH_HINT = ('The question asks for both numbers. Give the value before and after, "from <before> to '
              '<after>", using figures for the exact context the question names.')
@@ -63,8 +67,10 @@ BOTH_HINT = ('The question asks for both numbers. Give the value before and afte
 def missing_a_number(plan: QueryPlan, answer: str) -> bool:
     if not _BOTH.search(plan.question) or gave_up(answer):
         return False
-    asked = set(_FIGURE.findall(plan.question))
-    return len({f for f in _FIGURE.findall(answer) if f not in asked}) < 2
+    asked = set(_FIGURE.findall(_NOT_A_FIGURE.sub(" ", plan.question)))
+    text = _NOT_A_FIGURE.sub(" ", answer)
+    figures = _PERCENT.findall(text) if _PERCENT.search(text) else _FIGURE.findall(text)
+    return len({f.replace(" ", "") for f in figures if f not in asked}) < 2
 
 
 def gave_up(answer: str) -> bool:

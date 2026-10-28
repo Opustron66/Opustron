@@ -402,7 +402,8 @@ answer shape: start with the option that holds, in the question's own words, not
 Questions that ask for yes or no are left alone.
 
 **Both numbers.** When the question asks for both numbers and the answer gives fewer than two
-figures (beyond any in the question), the answer is asked for once more with "from <before> to
+figures (beyond any in the question; dates, times and durations like "24h" don't count, and
+when the answer has percentages only percentages count), the answer is asked for once more with "from <before> to
 <after>"; the retry is kept only if it has both.
 
 **Refusal wording, truncated replies.** "The corpus does not confirm" is rewritten to "does not

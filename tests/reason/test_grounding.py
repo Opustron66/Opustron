@@ -164,6 +164,8 @@ def test_a_reply_truncated_twice_is_asked_once_more_with_thinking_off():
 
 @pytest.mark.parametrize("answer,missing", [
     ("94%.", True),
+    ("99.1% as of the 24h all-on smoke test on 2026-05-26.", True),
+    ("It went from 1,200 to 900 requests on 2026-05-20.", False),
     ("From 71% to 94%.", False),
     ("The corpus does not record it.", False),
 ])
