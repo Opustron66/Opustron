@@ -44,9 +44,11 @@ EVIDENCE_RULES = """Evidence sufficiency rules (also apply when using a benchmar
 # "NOT shared (duplicated)" therefore denies "duplicated", and a hedge added after an answer
 # ("the corpus does not confirm ...") can turn it into a refusal.
 ANSWER_FORM = """How to write the answer:
-- Lead with the answer itself, stated positively in its own sentence. Keep negation words
-  ("not", "no longer", "rather than", "instead of") out of the sentence that gives the value:
-  write "Duplicated in each project", not "NOT shared (duplicated)".
+- Start with the bare answer as its own sentence: the name, number, date or value, or "Yes."
+  or "No." Then add one short supporting sentence if useful. Keep negation words ("not",
+  "no longer", "rather than", "instead of") out of the sentence that gives the value, even when
+  the question asks which one is NOT something: write "Phoenix." or "Duplicated.", never
+  "Phoenix is not a real project" or "NOT shared (duplicated)".
 - When the evidence answers the question, answer it plainly. Do not add caveats such as "the
   corpus does not confirm ..." to an answer you have given.
 - For the current state, give only the current value. Do not repeat superseded values, earlier
@@ -150,8 +152,9 @@ def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last:
                      "Use them only to say that something had not happened yet, or was not yet decided, "
                      "by the as-of date (and when it happened).\n\n")
     if plan.reference_date:
-        reference += ('For "had X happened by then?" answer "Yes." or "No." first, then the state as of '
-                      "that date and, if it changed later, the date it changed.\n\n")
+        reference += ('For "had X happened by then?" answer "Yes." or "No." first, then the value it held '
+                      'on that date in positive form (e.g. "It was still in beta.", not "It had not '
+                      'launched.") and, if it changed later, the date it changed.\n\n')
     system = f"{_contract()}\n\n{EVIDENCE_GUIDE}\n\n{EVIDENCE_RULES}\n\n{ANSWER_FORM}"
     if template := answer_template(plan):
         system += f"\n\n{template}"

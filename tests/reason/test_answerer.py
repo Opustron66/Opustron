@@ -73,7 +73,8 @@ def test_truncated_reply_is_retried_once_asking_for_brief_reasoning():
 def test_answer_form_rules_are_in_every_prompt():
     from chronicle.reason.answerer import _messages
     system = _messages(QueryPlan("Who owns payments?"), [Evidence("E:one", "x")], agentic=False, last=True)[0]["content"]
-    assert "stated positively" in system
+    assert "Start with the bare answer as its own sentence" in system
+    assert '"Phoenix."' in system
     assert "count every distinct one" in system
     assert 'The corpus does not record <it>.' in system
 
@@ -86,6 +87,7 @@ def test_as_of_questions_ask_for_yes_or_no_first():
     user = _messages(plan, [Evidence("E:one", "x")], agentic=False, last=True)[1]["content"]
     assert user.startswith("Answer as of 2026-05-10.")
     assert '"Yes." or "No." first' in user
+    assert "value it held" in user
     plain = _messages(QueryPlan("Who owns payments?"), [Evidence("E:one", "x")], agentic=False, last=True)[1]["content"]
     assert '"Yes." or "No."' not in plain
 

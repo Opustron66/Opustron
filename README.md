@@ -316,8 +316,8 @@ even when an external benchmark supplies the answer-format contract; they remain
 model instructions, not an independent semantic verifier.
 
 Answer form rules (`ANSWER_FORM`) follow how the benchmark grades: clause by clause,
-crediting a value only where it is asserted. So the answer leads with the value in a
-positive sentence ("Duplicated in each project", not "NOT shared (duplicated)"), gives
+crediting a value only where it is asserted. So the answer starts with the bare value as its own
+sentence ("Phoenix.", "Duplicated.", not "Phoenix is not a real project"), gives
 no hedge after an answer it has given, leaves out superseded values unless asked for
 the history, counts every distinct instance for "how many" questions, and words a gap
 as "The corpus does not record ...". As-of yes/no questions answer "Yes." or "No."
