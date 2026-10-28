@@ -54,7 +54,7 @@ class EchoTransport:
         body = doc.split("---")[-1].strip()  # drop front matter for fixture files
         sentence = body.split(". ")[0].rstrip(".") + "."
         tokens = TOKEN.findall(sentence)
-        claims = [{"subject": tokens[0] if tokens else "service", "predicate": "related_to",
+        claims = [{"subject": tokens[0] if tokens else "service", "predicate": "owns",
                    "object": tokens[-1] if tokens else "service", "valid_from": "today",
                    "quote": sentence}]
         content = "<think>The subject is " + (tokens[0] if tokens else "?") + "</think>" + json.dumps({"claims": claims})
@@ -75,7 +75,7 @@ def test_quotes_with_names_and_emails_survive_pseudonymisation(guarded):
     assert "PERSON_1" in sent and "EMAIL_1" in sent
     assert claim.quote == "Alice Chen hands payments to Dana Lee, cc alice.chen@example.com."
     assert claim.subject == "Alice Chen" and claim.object == "alice.chen@example.com"
-    assert extractor.dropped == 0
+    assert extractor.dropped_total == 0
     assert transport.calls[0]["response_format"]["json_schema"]["name"] == "claims"  # not double-wrapped
 
 
@@ -91,10 +91,11 @@ def test_cli_ingests_through_guard_and_logs_egress(guarded, monkeypatch):
 
     monkeypatch.setattr(cli, "LLMClient", Client)
     state = guarded / "state"
-    rc = cli.main(["--corpus", str(FIX), "--state", str(state), "--model", "m-test", "--timeout", "7"])
+    rc = cli.main(["--corpus", str(FIX), "--state", str(state), "--model", "m-test", "--timeout", "7",
+                   "--no-consolidate"])
 
     assert rc == 0
-    assert made == {"default_model": "m-test", "timeout": 7.0, "max_tokens": 8192}
+    assert made == {"default_model": "m-test", "timeout": 7.0, "max_tokens": 8192, "thinking": False}
     assert {c["model"] for c in transport.calls} == {"m-test"}
     assert {c["max_tokens"] for c in transport.calls} == {8192}
     assert "Alice Chen" not in json.dumps(transport.calls)

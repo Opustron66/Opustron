@@ -7,6 +7,7 @@
     memory.search("who owns payments", as_of="2026-05-20")
 """
 
+import json
 from collections.abc import Iterable
 from datetime import date, datetime
 from pathlib import Path
@@ -21,6 +22,7 @@ from .search import search as search_facts
 
 DB_FILE = "memory.sqlite3"
 CLAIMS_FILE = "claims.jsonl"  # written by P1's chronicle.ingest
+PAGES_FILE = "pages.jsonl"    # topic timelines and entity pages, from P1's consolidation pass
 
 When = date | datetime | str
 
@@ -40,6 +42,7 @@ class MemoryAPI:
         api = cls(MemoryDatabase(state / DB_FILE))
         if sync:
             api.sync_claims_file(state / CLAIMS_FILE)
+            api.sync_pages_file(state / PAGES_FILE)
         return api
 
     def close(self) -> None:
@@ -69,6 +72,14 @@ class MemoryAPI:
             return IngestReport()
         with path.open(encoding="utf-8") as lines:
             return self.ingest_claims(Claim.model_validate_json(line) for line in lines if line.strip())
+
+    def sync_pages_file(self, path: str | Path) -> dict[str, int]:
+        """Load P1's topic/entity pages as ``kind="topic"``/``"entity"`` facts (see ``sync_pages``)."""
+        path = Path(path)
+        if not path.is_file():
+            return {}
+        with path.open(encoding="utf-8") as lines:
+            return self.database.sync_pages([json.loads(line) for line in lines if line.strip()])
 
     def remember_note(self, content: str, *, source: str, at: datetime | None = None,
                       supersedes: str | None = None) -> str:

@@ -2,6 +2,7 @@
 import argparse
 import json
 import sys
+import time
 from datetime import date
 from pathlib import Path
 
@@ -9,7 +10,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from chronicle.reason.pipeline import answer_question
 
-def run(state: Path, instream=sys.stdin, outstream=sys.stdout):
+NOT_IN_CORPUS = "Not in the corpus"
+# Connection and server errors (not bad replies) are retried after a pause.
+NETWORK_RETRIES, RETRY_WAIT = 2, 30.0
+
+
+def run(state: Path, instream=sys.stdin, outstream=sys.stdout, retry_wait: float = RETRY_WAIT):
     for line_number, line in enumerate(instream, start=1):
         if not line.strip():
             continue
@@ -33,9 +39,19 @@ def run(state: Path, instream=sys.stdin, outstream=sys.stdout):
             except (TypeError, ValueError):
                 print(f"[chronicle] skipping line {line_number}: invalid 'as_of' date", file=sys.stderr)
                 continue
-        result = (answer_question(question["question"], state, as_of=as_of) if as_of is not None
-                  else answer_question(question["question"], state))
-        print(json.dumps({"id": question["id"], "answer": result.answer, "source_ids": result.source_ids}), file=outstream, flush=True)
+        answer, source_ids = NOT_IN_CORPUS, []
+        for attempt in range(1 + NETWORK_RETRIES):
+            try:
+                result = (answer_question(question["question"], state, as_of=as_of) if as_of is not None
+                          else answer_question(question["question"], state))
+                answer, source_ids = result.answer, result.source_ids
+                break
+            except Exception as exc:  # noqa: BLE001 - one bad reply must not end the run
+                print(f"[chronicle] {question['id']}: answering failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+                if isinstance(exc, ValueError) or attempt == NETWORK_RETRIES:
+                    break
+                time.sleep(retry_wait)  # a network or server error: wait it out and try again
+        print(json.dumps({"id": question["id"], "answer": answer, "source_ids": source_ids}), file=outstream, flush=True)
 
 def main():
     p = argparse.ArgumentParser()

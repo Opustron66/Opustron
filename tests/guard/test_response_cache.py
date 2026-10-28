@@ -96,3 +96,26 @@ def test_cache_stores_tokens_not_restored_email():
     cached = next(llm_client._CACHE_DIR.glob("*.txt")).read_text()
     assert cached == "EMAIL_1"
     assert "maya@example.test" not in json.dumps(calls)
+
+
+def test_local_proxy_port_does_not_split_the_cache():
+    from chronicle.guard.llm_client import _cache_endpoint
+    assert _cache_endpoint("http://127.0.0.1:53111/v1/") == _cache_endpoint("http://127.0.0.1:60222/v1")
+    assert _cache_endpoint("https://api.tokenfactory.nebius.com/v1/") == "https://api.tokenfactory.nebius.com/v1"
+
+
+def test_cache_can_be_switched_off_for_independent_trials(monkeypatch):
+    from chronicle.guard.llm_client import LLMClient
+    monkeypatch.setenv("CHRONICLE_LLM_CACHE", "off")
+    assert LLMClient(transport=lambda **kw: None)._use_cache is False
+    monkeypatch.delenv("CHRONICLE_LLM_CACHE")
+    assert LLMClient(transport=lambda **kw: None)._use_cache is True
+
+
+def test_egress_log_marks_cache_hits_as_not_sent():
+    client = LLMClient(transport=lambda **kw: response('{"claims": []}'))
+    client.complete(MESSAGES, schema=SCHEMA)
+    client.complete(MESSAGES, schema=SCHEMA)
+    second, first = egress_logger._default_logger.tail()  # newest first
+    assert first["cached"] is False and first["prompt_tokens"] == 3
+    assert second["cached"] is True and second["prompt_tokens"] == 0

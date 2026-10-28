@@ -6,12 +6,18 @@ from chronicle.guard.pii_detector import contains_pii, detect
     ("Email me at alice@example.com", "EMAIL_ADDRESS"),
     ("Call 555-867-5309", "PHONE_NUMBER"),
     ("SSN: 123-45-6789", "US_SSN"),
-    ("Visit https://example.com/path", "URL"),
 ])
 def test_detects_known_pii(text, expected_type):
     matches = detect(text)
     types = [m.entity_type for m in matches]
     assert expected_type in types, f"Expected {expected_type} in {types}"
+
+
+def test_links_stay_visible_but_emails_inside_them_do_not():
+    text = "MR at https://gitlab.example.com/atlas/core/-/merge_requests/342 ?by=dana@corp.io"
+    found = {m.entity_type: m.value for m in detect(text)}
+    assert "URL" not in found
+    assert found.get("EMAIL_ADDRESS") == "dana@corp.io"
 
 
 def test_contains_pii_true():

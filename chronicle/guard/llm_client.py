@@ -28,16 +28,21 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import spend_limit
+
 _CACHE_DIR = Path.home() / ".chronicle" / "llm_cache"
 
 # Models
-DEV_MODEL = "nvidia/nemotron-mini-4b-instruct"   # cheap, fast
-PROD_MODEL = "nvidia/nemotron-4-340b-instruct"    # official benchmark runs
+# Token Factory ids, as used in the team's live runs (Oct 2026).
+DEV_MODEL = "nvidia/Nemotron-3_5-Lightning"        # cheap, fast
+PROD_MODEL = "nvidia/Nemotron-3-Ultra-550b-a55b"    # official benchmark runs
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
-DEFAULT_MAX_TOKENS = 1024  # reasoning models (Nemotron) need ~8192: set max_tokens or CHRONICLE_MAX_TOKENS
+# Reasoning tokens count toward max_tokens, so a small cap returns empty or truncated replies.
+DEFAULT_MAX_TOKENS = 16384
 
 # HTTP statuses an OpenAI-compatible endpoint returns when it rejects response_format
 _SCHEMA_REJECTED_STATUSES = (400, 422)
+_FALSY = ("0", "false", "no", "off")
 
 
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -123,18 +128,24 @@ class LLMClient:
         max_tokens: int | None = None,
         timeout: float | None = None,
         transport: Callable[..., Any] | None = None,
+        thinking: bool | None = None,
     ) -> None:
         """
         transport: optional replacement for ``OpenAI().chat.completions.create``
         (takes its keyword arguments, returns an object with ``.choices`` and
         ``.usage``). Tests use it to run without the network.
+
+        thinking: switch a reasoning model's thinking on or off (Nemotron's
+        ``enable_thinking`` chat-template flag); None keeps the model default.
+        Falls back to CHRONICLE_THINKING.
         """
-        self._api_key = api_key or os.environ.get("NEBIUS_API_KEY", "")
-        self._base_url = base_url or os.environ.get("NEBIUS_BASE_URL", DEFAULT_BASE_URL)
+        self._api_key = api_key or os.environ.get("NEBIUS_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+        self._base_url = base_url or os.environ.get("NEBIUS_BASE_URL") or os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL)
         self._default_model = default_model or os.environ.get(
             "CHRONICLE_MODEL", DEV_MODEL
         )
-        self._use_cache = use_cache
+        # CHRONICLE_LLM_CACHE=off: no cache reads or writes, so a benchmark trial makes fresh calls.
+        self._use_cache = use_cache and os.environ.get("CHRONICLE_LLM_CACHE", "1").lower() not in _FALSY
         self._router = privacy_router  # set after construction to avoid circular import
         self.max_tokens = max_tokens or int(
             os.environ.get("CHRONICLE_MAX_TOKENS", DEFAULT_MAX_TOKENS)
@@ -142,9 +153,14 @@ class LLMClient:
         self._timeout = timeout
         self._transport = transport
         self._transport_lock = threading.Lock()
-        self._structured = True  # flips to False once the endpoint rejects json_schema
+        self._local = threading.local()
+        # CHRONICLE_STRUCTURED=false skips response_format; it also flips off once the endpoint rejects json_schema
+        self._structured = os.environ.get("CHRONICLE_STRUCTURED", "1").lower() not in _FALSY
+        if thinking is None and (env := os.environ.get("CHRONICLE_THINKING")):
+            thinking = env.lower() not in _FALSY
+        self.thinking = thinking
 
-        if use_cache:
+        if self._use_cache:
             _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -187,6 +203,8 @@ class LLMClient:
 
         # Redact PII in all message contents
         redacted_messages, mapping = router.redact_messages(messages)
+        redacted_messages = with_placeholder_note(redacted_messages)
+        self._local.mapping = mapping
 
         # Check cache
         budget = max_tokens or self.max_tokens
@@ -197,6 +215,7 @@ class LLMClient:
         if cache_hit:
             raw, prompt_tokens, completion_tokens, finish_reason = cached, 0, 0, None
         else:
+            spend_limit.check(get_logger().records)
             raw, prompt_tokens, completion_tokens, finish_reason = self._call_api(
                 redacted_messages, schema, model, temperature, budget
             )
@@ -213,10 +232,12 @@ class LLMClient:
             redacted=mapping is not None and bool(mapping.pii_types_seen()),
             pii_types=mapping.pii_types_seen() if mapping else [],
             request_preview=redacted_messages[-1]["content"][:200] if redacted_messages else "",
+            cached=cache_hit,
         )
 
         if finish_reason in ("length", "content_filter"):
-            raise ValueError(f"Model response incomplete: finish_reason={finish_reason}, max_tokens={budget}")
+            raise ValueError(f"truncated reply (finish_reason={finish_reason}, max_tokens={budget})"
+                             " — raise CHRONICLE_MAX_TOKENS or set CHRONICLE_THINKING=false")
         if not raw.strip():
             raise ValueError("Model returned an empty response")
         result = parse_json_reply(restored_raw) if schema is not None and not _is_wrapped(schema) else restored_raw
@@ -224,6 +245,12 @@ class LLMClient:
             # Persist pseudonymised text only, after parsing/admission checks succeed.
             self._save_cache(cache_key, raw)
         return result
+
+    def restore_variants(self) -> dict[str, list[str]]:
+        """For the calling thread's last ``complete``: restored value → other spellings
+        the request used for it. Lets P1 match a restored quote back to its document."""
+        mapping = getattr(self._local, "mapping", None)
+        return mapping.surfaces() if mapping is not None else {}
 
     # ------------------------------------------------------------------
     # Internal
@@ -249,6 +276,8 @@ class LLMClient:
         if schema is not None and self._structured:
             envelope = schema if _is_wrapped(schema) else {"name": "response", "schema": schema}
             kwargs["response_format"] = {"type": "json_schema", "json_schema": envelope}
+        if self.thinking is not None:
+            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": self.thinking}}
 
         try:
             resp = create(**kwargs)
@@ -259,11 +288,12 @@ class LLMClient:
             resp = create(**kwargs)
             self._structured = False
 
-        content = resp.choices[0].message.content or ""
+        choice = resp.choices[0]
+        content = choice.message.content
         usage = resp.usage
         prompt_tokens = usage.prompt_tokens if usage else 0
         completion_tokens = usage.completion_tokens if usage else 0
-        return content, prompt_tokens, completion_tokens, getattr(resp.choices[0], "finish_reason", None)
+        return content or "", prompt_tokens, completion_tokens, getattr(choice, "finish_reason", None)
 
     def _get_transport(self) -> Callable[..., Any]:
         with self._transport_lock:
@@ -278,6 +308,11 @@ class LLMClient:
                                           "max_retries": 2}
                 if self._timeout is not None:
                     kwargs["timeout"] = self._timeout
+                if _LOOPBACK.match(self._base_url):
+                    # The benchmark's accounting proxy reads token usage from plain JSON and
+                    # cannot parse gzip, which Token Factory sends when allowed; without this
+                    # every run is marked "not comparable on cost".
+                    kwargs["default_headers"] = {"Accept-Encoding": "identity"}
                 self._transport = OpenAI(**kwargs).chat.completions.create
             return self._transport
 
@@ -291,8 +326,9 @@ class LLMClient:
         temperature: float = 0.0,
     ) -> str:
         payload = json.dumps({"version": 2, "messages": messages, "schema": schema, "model": model,
-                              "base_url": self._base_url.rstrip("/"),
-                              "max_tokens": max_tokens or self.max_tokens, "temperature": temperature}, sort_keys=True)
+                              "base_url": _cache_endpoint(self._base_url),
+                              "max_tokens": max_tokens or self.max_tokens, "temperature": temperature,
+                              "structured": self._structured, "thinking": self.thinking}, sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()
 
     def _load_cache(self, key: str) -> str | None:
@@ -302,6 +338,41 @@ class LLMClient:
     def _save_cache(self, key: str, content: str) -> None:
         path = _CACHE_DIR / f"{key}.txt"
         path.write_text(content, encoding="utf-8")
+
+
+_NAME_TOKEN = re.compile(r"\b(?:PERSON|ORG|LOC|NRP)_\d+\b")
+PLACEHOLDER_NOTE = (
+    "Privacy note: names of people, organisations and places in this request were replaced by "
+    "placeholders such as PERSON_1 or ORG_2. Each placeholder stands for one real name everywhere "
+    "in the request. Treat it exactly as that name: a fact stated about PERSON_1 is stated about "
+    "that person, and an answer may name PERSON_1. Do not call a value unstated because it sits "
+    "next to a placeholder."
+)
+
+
+def with_placeholder_note(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Tell the model how to read name placeholders, when the request contains any.
+
+    Without it, answers on redacted evidence hedged ("referenced as ... (specific value not
+    stated)") and the deterministic grader read them as not asserting the value.
+    CHRONICLE_PLACEHOLDER_NOTE=off leaves requests unchanged."""
+    if os.environ.get("CHRONICLE_PLACEHOLDER_NOTE", "1").lower() in _FALSY:
+        return messages
+    if not any(_NAME_TOKEN.search(m.get("content") or "") for m in messages):
+        return messages
+    if messages and messages[0].get("role") == "system":
+        first = {**messages[0], "content": f"{messages[0]['content']}\n\n{PLACEHOLDER_NOTE}"}
+        return [first, *messages[1:]]
+    return [{"role": "system", "content": PLACEHOLDER_NOTE}, *messages]
+
+
+_LOOPBACK = re.compile(r"^(https?://)(?:127\.0\.0\.1|localhost|\[::1\]):\d+", re.IGNORECASE)
+
+
+def _cache_endpoint(base_url: str) -> str:
+    """Endpoint part of the cache key. A local proxy (the benchmark's accounting proxy) gets a
+    new port every run; keying on the port would make every run a cold cache."""
+    return _LOOPBACK.sub(r"\1loopback", base_url.rstrip("/"))
 
 
 def _rejects_schema(exc: Exception) -> bool:

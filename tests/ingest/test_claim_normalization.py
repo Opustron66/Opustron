@@ -29,7 +29,7 @@ def test_same_document_deadline_replacement_drops_spurious_close_and_supersedes(
         {"subject": "invoice export", "predicate": "deadline", "object": "deadline", "valid_from": "2026-06-25", "quote": quote},
         {"subject": "invoice export", "predicate": "deadline", "object": "deadline", "valid_to": "2026-06-18", "quote": quote},
     ], quote)
-    assert ex.dropped == 1 and len(claims) == 1
+    assert ex.dropped_total == 1 and len(claims) == 1
     assert claims[0].object == "due" and claims[0].valid_from == date(2026, 6, 25)
     old = Claim(subject="invoice export", predicate="deadline", object="due date", valid_from="2026-06-18",
                 observed_at="2026-06-03", doc_id="original", quote="Export due June 18.")
@@ -81,4 +81,4 @@ def test_unresolved_replacement_does_not_discard_stated_closure():
         {"subject":"export", "predicate":"deadline", "object":"due", "valid_from":"when stars align", "quote":quote},
         {"subject":"export", "predicate":"deadline", "object":"due", "valid_to":"today", "quote":quote},
     ], quote)
-    assert len(claims) == 2 and ex.dropped == 0
+    assert len(claims) == 2 and ex.dropped_total == 0

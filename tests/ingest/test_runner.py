@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from chronicle.ingest.pipeline import ingest_corpus, read_claims, run_ingest
+from chronicle.ingest.pipeline import DOCS_FILE, ingest_corpus, read_claims, read_docs, run_ingest
 from chronicle.schema import Document
 
 FIX = Path(__file__).parent.parent / "fixtures" / "corpus"
@@ -79,3 +79,66 @@ def test_parallel_workers_preserve_order_and_results(tmp_path):
     ingest_corpus(FIX, serial, FakeLLM(), workers=1)
     ingest_corpus(FIX, parallel, FakeLLM(), workers=4)
     assert (serial / "claims.jsonl").read_text() == (parallel / "claims.jsonl").read_text()
+
+
+def test_closings_emitted_across_parts(tmp_path):
+    """Part_a claim superseded by part_b claim produces a closing in the output."""
+    import json as _json
+
+    class HandoverLLM:
+        """Returns an own claim for part_a docs and an owner-change pair for part_b."""
+        def complete(self, messages, schema=None):
+            content = messages[1]["content"]
+            if "Dana Lee" in content:
+                return _json.dumps({"claims": [
+                    {"subject": "Dana Lee", "predicate": "owns", "object": "payments service",
+                     "valid_from": "today", "quote": "Dana Lee takes over the payments service from Alice Chen."},
+                    {"subject": "Alice Chen", "predicate": "owns", "object": "payments service",
+                     "valid_from": None, "valid_to": "today",
+                     "quote": "Dana Lee takes over the payments service from Alice Chen."},
+                ]})
+            quote = content.split(".")[0] + "."
+            return _json.dumps({"claims": [
+                {"subject": "alice chen", "predicate": "owns", "object": "payments service",
+                 "valid_from": "today", "quote": quote}]})
+
+    ingest_corpus(FIX / "part_a", tmp_path, HandoverLLM())
+    ingest_corpus(FIX / "part_b", tmp_path, HandoverLLM())
+
+    claims = read_claims(tmp_path / "claims.jsonl")
+    # There must be at least one claim with valid_to set (a closing)
+    closings = [c for c in claims if c.valid_to is not None]
+    assert len(closings) >= 1
+    assert any(c.subject.lower() in ("alice chen",) for c in closings)
+
+
+def test_docs_jsonl_written_once_per_doc_even_when_extraction_fails(tmp_path):
+    class Broken(FakeLLM):
+        def complete(self, messages, schema=None):
+            raise RuntimeError("truncated reply")
+
+    ingest_corpus(FIX, tmp_path, Broken())  # every extraction fails
+    ingest_corpus(FIX, tmp_path, FakeLLM())  # retry succeeds
+    docs = read_docs(tmp_path / DOCS_FILE)
+    assert len(docs) == 3 and len({d["doc_id"] for d in docs}) == 3
+    email = next(d for d in docs if d["doc_id"] == "E:2026-04-16T09-12-00__aaaa0001")
+    assert email["date"] and email["text"].strip()
+    assert "Known people:" not in email["text"]  # prompt hint, not document text
+
+
+def test_inverted_interval_is_dropped_and_counted(tmp_path):
+    class InvertedLLM:
+        def complete(self, messages, schema=None):
+            quote = messages[1]["content"].split(".")[0] + "."
+            return json.dumps({"claims": [
+                {"subject": "alice chen", "predicate": "owns", "object": "payments",
+                 "valid_from": "today", "quote": quote},
+                {"subject": "alice chen", "predicate": "status", "object": "on leave",
+                 "valid_from": "2027-08-22", "valid_to": "2027-07-23", "quote": quote},
+            ]})
+
+    stats = ingest_corpus(FIX / "part_a", tmp_path, InvertedLLM())
+
+    claims = read_claims(tmp_path / "claims.jsonl")
+    assert claims and all(c.object != "on leave" for c in claims)
+    assert stats.dropped_by_reason.get("interval") == stats.documents

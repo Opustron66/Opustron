@@ -42,10 +42,18 @@ set -a; source .env; set +a
 |---|---|
 | `NEBIUS_API_KEY` | Nebius Token Factory (all model calls) |
 | `NEBIUS_BASE_URL` | Defaults to `https://api.tokenfactory.nebius.com/v1/` |
-| `CHRONICLE_MODEL` | Defaults to the cheap dev model; use the large model only for official benchmark runs |
-| `CHRONICLE_MAX_TOKENS` | Default completion budget for `chronicle.guard.llm` (1024). Reasoning models need ~8192 |
+| `CHRONICLE_MODEL` | Defaults to `nvidia/Nemotron-3_5-Lightning`; use `nvidia/Nemotron-3-Ultra-550b-a55b` only for official benchmark runs |
+| `CHRONICLE_MAX_TOKENS` | Default completion budget for `chronicle.guard.llm` (16384). Reasoning tokens count toward it, so small budgets return empty or truncated replies |
+| `CHRONICLE_PSEUDONYMS` | `surrogate` shows the model realistic stand-in names ("Jordan Okafor") in place of `PERSON_1` tokens. Unset = tokens |
+| `CHRONICLE_SPEND_LIMIT_USD` / `CHRONICLE_SPEND_SINCE` | Hard spending cap: model calls are refused once the egress log shows this many USD spent since the ISO timestamp (Token Factory itself only alerts, and charges the card at $0) |
+| `CHRONICLE_LLM_CACHE` | `off` disables the response cache in `~/.chronicle/llm_cache` (independent benchmark trials). Unset = on |
 | `TAVILY_API_KEY` | Web enrichment |
 | `CHRONICLE_REDACT_RECALL` | Hermes plugin: `0` stops masking emails/phones/IDs in recalled memory |
+| `CHRONICLE_REDACT_NAMES` | Benchmark runs only: `off` stops pseudonymising names, organisations and places (emails/phones/IDs stay masked); `person` masks people only, leaving organisations and places. Unset = on |
+| `CHRONICLE_SECOND_LOOK` | `off` disables the wider retry for answers that say the corpus is silent. Unset = on |
+| `CHRONICLE_VOTE` | `1` (set by the benchmark adapter) answers flip-prone questions (yes/no, "which one", "how many", as-of) up to three times and keeps the majority. Unset = off |
+| `CHRONICLE_POSITIVE_FORM` | `1` (set by the benchmark adapter) rewrites an answer whose first sentence puts the value next to "not", "rather than" etc., so the value is stated on its own. Unset = off |
+| `CHRONICLE_FULL_CORPUS` | `1` answers every question over the whole corpus (all documents, oldest first) instead of retrieved evidence; for corpora that fit the model context. Unset = off |
 
 ## Calling a model: always use `chronicle.guard.llm`
 
@@ -247,6 +255,14 @@ longer reads `OPENAI_BASE_URL`, `OPENAI_API_KEY` or `MNEMO_MODEL`. A proxy run
 without model traffic is not an official result. Keep state and gold answers
 out of Git, and do not tune on gold answers.
 
+The guard pseudonymises names, organisations and places before every model
+call, and gives one entity the same token everywhere in a request ("Camden Row"
+and "camden's" both become `LOC_1`). Placeholders still cost some answer
+accuracy, so a benchmark run may set `CHRONICLE_REDACT_NAMES=off` to send real
+names. Emails, phones, IDs and URLs stay masked either way, and a warning is
+logged while names are off. Redaction is on by default: set the switch per run,
+not in `adapter.json` or `.env`, and report scores both with and without it.
+
 ## Memory Time Machine UI
 
 ```bash
@@ -302,6 +318,51 @@ whether it happened" rather than a definite yes/no. Explicit completed, cancelle
 or not-completed evidence can support a definite answer. These rules are appended
 even when an external benchmark supplies the answer-format contract; they remain
 model instructions, not an independent semantic verifier.
+
+Answer form rules (`ANSWER_FORM`) follow how the benchmark grades: clause by clause,
+crediting a value only where it is asserted. So the answer starts with the bare value as its own
+sentence ("Phoenix.", "Duplicated.", not "Phoenix is not a real project"), gives
+no hedge after an answer it has given, leaves out superseded values unless asked for
+the history, counts every distinct instance for "how many" questions, and words a gap
+as "The corpus does not record ...". As-of yes/no questions answer "Yes." or "No."
+first. "Both numbers" questions give the value before and after. A person's role
+may be answered from clear indirect evidence ("Priya's team builds Orion"), but an agenda is never
+treated as a record of what a meeting discussed. A commitment someone makes about their own work
+("I'll take over the slot") counts as a step taken; scheduled events still need evidence they
+happened. For as-of questions, a change written after the
+date ("from 30d to 14d") may supply the old value. Retrieval packs about 10k tokens of evidence (`CHAR_BUDGET` 40,000 characters).
+
+**Second look.** When an answer's first sentence says the corpus is silent, the question is
+retrieved again with about 25k tokens of evidence (`WIDE` in `retriever.py`) and answered once
+more. The retry replaces the first answer only if it answers and cites a document, so a correct
+"not recorded" stands when the wider search finds nothing. `CHRONICLE_SECOND_LOOK=off` disables it.
+
+**Voting on hard questions.** Between identical benchmark runs the answers that flipped were mostly
+yes/no, "which one", "how many" and as-of questions (6 of 15 disambiguation questions on corpus A).
+With `CHRONICLE_VOTE=1` those are answered a second time at temperature 0.6; if the two agree the
+first stands, otherwise a third answer decides. About 32 of corpus A's 186 questions qualify.
+
+**Positive-form check.** The grader reads a value in a clause that also holds "not", "no longer",
+"rather than" or "instead of" as denied, and the model kept answering "NOT shared (duplicated)"
+despite the prompt rule. With `CHRONICLE_POSITIVE_FORM=1` the answer's first sentence is scanned for
+that shape; when found (and the question is not yes/no or about whether something happened), one
+small call sees only the question and answer and restates the value first ("Duplicated. It is not
+shared."). A rewrite that still leads with a negation, gives up, or grows too long is discarded. On
+run 4's answers it fires on 5 of 186. Answers must also use only figures stated for the exact
+context a question names ("on the smoke fixture").
+
+**Relative dates are computed, not guessed.** Documents shown to the model carry the weekday they
+were written ("written Wednesday 2026-05-20") and the calendar date after each relative day
+(`chronicle/reason/dates.py`): "by Mon EOD" becomes "by Mon [2026-05-25] EOD", "next Wed" the
+Wednesday of the following week, "tonight"/"tomorrow" their dates. A bare weekday could be past or
+coming, so it shows both ("Tue [2026-05-19 or 2026-05-26]") and the model picks by tense. Explicit
+dates ("Wed, 20 May", "Fri the 29th") are left alone. Only the prompt text changes; stored memory
+does not. The model had answered one deadline as 23, 24 and 25 May in different runs.
+
+**Whole-corpus answering (experiment).** `CHRONICLE_FULL_CORPUS=1` skips retrieval and gives the
+model every document, oldest first, in one prompt (corpus A is about 120k tokens; Nemotron Ultra
+takes 1M). The system prompt and the corpus come before anything question-specific, so the
+provider's prompt cache serves that prefix at the cached-input price.
 
 **Live egress log.** In a second terminal, run:
 

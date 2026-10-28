@@ -17,10 +17,11 @@ SINGLE = [
     ("today", REF), ("now", REF), ("tonight", REF), ("this morning", REF),
     ("tomorrow", D(2026, 5, 13)), ("yesterday", D(2026, 5, 11)),
     ("day before yesterday", D(2026, 5, 10)), ("the day after tomorrow", D(2026, 5, 14)),
-    ("next Friday", D(2026, 5, 15)), ("next Tuesday", D(2026, 5, 19)), ("next Monday", D(2026, 5, 18)),
+    ("next Friday", D(2026, 5, 22)), ("next Tuesday", D(2026, 5, 19)), ("next Monday", D(2026, 5, 18)),
+    ("next Sunday", D(2026, 5, 24)),
     ("last Monday", D(2026, 5, 11)), ("last Tuesday", D(2026, 5, 5)), ("last Friday", D(2026, 5, 8)),
     ("this Friday", D(2026, 5, 15)), ("this Tuesday", D(2026, 5, 12)), ("Friday", D(2026, 5, 15)),
-    ("on Friday", D(2026, 5, 15)), ("by Friday", D(2026, 5, 15)), ("next fri", D(2026, 5, 15)),
+    ("on Friday", D(2026, 5, 15)), ("by Friday", D(2026, 5, 15)), ("next fri", D(2026, 5, 22)),
     ("in 3 days", D(2026, 5, 15)), ("in two days", D(2026, 5, 14)), ("in a week", D(2026, 5, 19)),
     ("in 2 weeks", D(2026, 5, 26)), ("in 1 month", D(2026, 6, 12)), ("in a year", D(2027, 5, 12)),
     ("two weeks ago", D(2026, 4, 28)), ("a week ago", D(2026, 5, 5)), ("3 days ago", D(2026, 5, 9)),
@@ -64,7 +65,7 @@ def test_table_has_50_plus_expressions():
 
 def test_reference_date_drives_everything_not_wall_clock():
     assert resolve("tomorrow", date(2020, 2, 28)).start == date(2020, 2, 29)
-    assert resolve("next Friday", date(2031, 1, 1)).start == date(2031, 1, 3)
+    assert resolve("next Friday", date(2031, 1, 1)).start == date(2031, 1, 10)
 
 
 def test_bare_weekday_is_lower_confidence_and_same_day_for_this():
@@ -109,3 +110,11 @@ def test_dateparser_fallback_is_anchored_to_reference():
 def test_legacy_normalize():
     assert normalize(None) is None
     assert normalize("2026-05-12T01:02:03") == datetime(2026, 5, 12, 1, 2, 3)
+
+
+def test_next_weekday_is_in_the_following_calendar_week():
+    thu = date(2026, 4, 16)  # Thursday: "next Friday" is NOT tomorrow
+    assert resolve("next Friday", thu).start == date(2026, 4, 24)
+    assert resolve("this Friday", thu).start == date(2026, 4, 17)
+    sun = date(2026, 5, 17)  # Sunday still belongs to the week that started Mon 11 May
+    assert resolve("next Monday", sun).start == date(2026, 5, 18)

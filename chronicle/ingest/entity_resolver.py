@@ -22,7 +22,10 @@ def resolve(entities: list[Entity]) -> list[Entity]:
 
 def normalize_name(name: str) -> str:
     name = _TITLES.sub("", name.strip())
-    return re.sub(r"[^\w\s@.-]", "", name).casefold().strip()
+    # Strip leading @ (Slack/email handles), replace _ and . with space for fuzzy matching
+    name = re.sub(r"^@+", "", name)
+    name = re.sub(r"[_.]", " ", name)
+    return re.sub(r"[^\w\s-]", "", name).casefold().strip()
 
 
 class EntityResolver:
@@ -75,5 +78,7 @@ class EntityResolver:
 
     def resolve_claim(self, claim: Claim) -> Claim:
         subject = self.resolve(claim.subject)
-        obj = self.resolve(claim.object) if normalize_name(claim.object) in self.known else claim.object
+        obj_key = normalize_name(claim.object)
+        # Resolve object when it's a known alias OR already in the known canonical table
+        obj = self.resolve(claim.object) if (obj_key in self.canonical or obj_key in self.known) else claim.object
         return claim.model_copy(update={"subject": subject, "object": obj})

@@ -1,3 +1,4 @@
+from chronicle.guard.pii_detector import PiiMatch
 from chronicle.guard.pseudonymizer import (
     PseudonymMapping,
     pseudonymize,
@@ -60,3 +61,60 @@ def test_reidentify_unknown_token_unchanged():
     mapping = PseudonymMapping()
     result = reidentify("Hello PERSON_99 world", mapping)
     assert result == "Hello PERSON_99 world"
+
+
+def test_mentions_differing_in_case_and_possessive_share_a_token():
+    mapping = PseudonymMapping()
+    a = mapping.token_for("LOCATION", "Camden Row")
+    assert mapping.token_for("LOCATION", "camden row's") == a
+    assert mapping.token_for("LOCATION", "CAMDEN  ROW") == a
+    assert mapping.original_for(a) == "Camden Row"
+
+
+def test_multi_word_place_claims_its_head_word():
+    mapping = PseudonymMapping()
+    a = mapping.token_for("LOCATION", "Camden Row")
+    assert mapping.token_for("LOCATION", "camden") == a
+    b = mapping.token_for("ORGANIZATION", "Ridgeway Depot")
+    assert mapping.token_for("ORGANIZATION", "Ridgeway") == b
+    assert a != b
+
+
+def test_head_word_seen_first_is_merged_with_full_name():
+    mapping = PseudonymMapping()
+    a = mapping.token_for("LOCATION", "camden")
+    assert mapping.token_for("LOCATION", "Camden Row") == a
+    assert mapping.original_for(a) == "Camden Row"
+
+
+def test_no_alias_for_short_generic_or_person_heads():
+    mapping = PseudonymMapping()
+    mapping.token_for("ORGANIZATION", "Site Office")    # generic head
+    mapping.token_for("LOCATION", "Bay Road")           # head under 4 letters
+    mapping.token_for("PERSON", "Dana Whitfield")       # people don't get head aliases
+    assert {"site", "bay", "dana"}.isdisjoint(mapping._forward)
+
+
+def test_given_entities_are_replaced_everywhere_in_the_text():
+    text = "Camden Row is late. Everyone on camden row knows; camden's budget is tight."
+    redacted, mapping = pseudonymize(text, entities=[PiiMatch("LOCATION", "Camden Row", 0, 10)])
+    assert redacted == "LOC_1 is late. Everyone on LOC_1 knows; LOC_1's budget is tight."
+    assert reidentify(redacted, mapping) == (
+        "Camden Row is late. Everyone on Camden Row knows; Camden Row's budget is tight."
+    )
+
+
+def test_names_inside_emails_are_left_to_the_email_token():
+    text = "Dana wrote from dana@corp.com"
+    redacted, _ = pseudonymize(
+        text,
+        entities=[PiiMatch("PERSON", "Dana", 0, 4), PiiMatch("EMAIL_ADDRESS", "dana@corp.com", 16, 29)],
+    )
+    assert redacted == "PERSON_1 wrote from EMAIL_1"
+
+
+def test_surfaces_lists_the_other_spellings_a_token_replaced():
+    text = "Camden Row is late. camden's budget is tight."
+    redacted, mapping = pseudonymize(text, entities=[PiiMatch("LOCATION", "Camden Row", 0, 10)])
+    assert "camden" not in redacted.casefold()
+    assert mapping.surfaces() == {"Camden Row": ["camden"]}

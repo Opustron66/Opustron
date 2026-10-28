@@ -20,9 +20,9 @@ def isolated_home(tmp_path, monkeypatch):
     return tmp_path
 
 
-def reply(content, prompt_tokens=3, completion_tokens=5):
+def reply(content, prompt_tokens=3, completion_tokens=5, finish_reason="stop"):
     return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content), finish_reason=finish_reason)],
         usage=SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens),
     )
 
@@ -69,7 +69,7 @@ def test_max_tokens_configurable(monkeypatch):
                                                                        max_tokens=50)
     monkeypatch.setenv("CHRONICLE_MAX_TOKENS", "4096")
     LLMClient(transport=t, use_cache=False).complete([{"role": "user", "content": "d"}])
-    assert [c["max_tokens"] for c in t.calls] == [1024, 8192, 50, 4096]
+    assert [c["max_tokens"] for c in t.calls] == [llm_client.DEFAULT_MAX_TOKENS, 8192, 50, 4096]
 
 
 def test_schema_rejection_falls_back_and_sticks():
@@ -176,3 +176,89 @@ def test_bare_schema_call_survives_think_block():
     )
     assert "dana@corp.io" not in json.dumps(t.calls[0]["messages"])
     assert out == {"answer": "dana@corp.io", "source_ids": ["email_042"]}  # restored, then parsed
+
+
+# ---------------------------------------------------------------------------
+# New tests: CHRONICLE_STRUCTURED env var and empty-reply guard
+# ---------------------------------------------------------------------------
+
+def test_chronicle_structured_false_skips_response_format(monkeypatch):
+    """CHRONICLE_STRUCTURED=false must omit response_format even when a schema is passed."""
+    monkeypatch.setenv("CHRONICLE_STRUCTURED", "false")
+    t = Recorder('{"claims": []}')
+    client = LLMClient(transport=t, use_cache=False)
+    assert client._structured is False
+    # Bare-schema call — no response_format in the request
+    out = client.complete([{"role": "user", "content": "hi"}], schema=BARE)
+    assert "response_format" not in t.calls[0]
+    # Result still parsed because it is a bare schema
+    assert out == {"claims": []}
+
+
+def test_chronicle_structured_default_sends_response_format(monkeypatch):
+    """Without CHRONICLE_STRUCTURED=false the default is to send response_format."""
+    monkeypatch.delenv("CHRONICLE_STRUCTURED", raising=False)
+    t = Recorder('{"x": 1}')
+    client = LLMClient(transport=t, use_cache=False)
+    assert client._structured is True
+    client.complete([{"role": "user", "content": "hi"}], schema=BARE)
+    assert "response_format" in t.calls[0]
+
+
+@pytest.mark.parametrize("content", [None, "Here's a thinking process: 1. {\"claims\": [draft"])
+def test_empty_or_truncated_reply_raises_and_is_not_cached(isolated_home, content):
+    """A reply cut off by max_tokens is never parsed: fragments of the thinking are not an answer."""
+    client = LLMClient(transport=lambda **kw: reply(content, completion_tokens=32768, finish_reason="length"))
+    with pytest.raises(ValueError, match="finish_reason=length"):
+        client.complete([{"role": "user", "content": "ingest this long doc"}], WRAPPED)
+    assert list((isolated_home / "cache").glob("*.txt")) == []
+
+
+def test_thinking_switch_sent_only_when_set(monkeypatch):
+    monkeypatch.delenv("CHRONICLE_THINKING", raising=False)
+    t = Recorder()
+    LLMClient(transport=t, use_cache=False).complete([{"role": "user", "content": "a"}])
+    LLMClient(transport=t, use_cache=False, thinking=False).complete([{"role": "user", "content": "b"}])
+    monkeypatch.setenv("CHRONICLE_THINKING", "false")
+    LLMClient(transport=t, use_cache=False).complete([{"role": "user", "content": "c"}])
+    assert "extra_body" not in t.calls[0]
+    off = {"chat_template_kwargs": {"enable_thinking": False}}
+    assert t.calls[1]["extra_body"] == off and t.calls[2]["extra_body"] == off
+
+
+def test_cache_key_covers_reply_changing_settings():
+    t = Recorder()
+    msgs = [{"role": "user", "content": "same prompt"}]
+    LLMClient(transport=t).complete(msgs)
+    LLMClient(transport=t).complete(msgs)  # identical settings: cache hit
+    LLMClient(transport=t, max_tokens=32768).complete(msgs)
+    LLMClient(transport=t, thinking=False).complete(msgs)
+    assert len(t.calls) == 3
+
+
+def test_placeholder_note_is_added_only_when_names_were_replaced(monkeypatch):
+    from chronicle.guard.llm_client import PLACEHOLDER_NOTE, with_placeholder_note
+    plain = [{"role": "system", "content": "rules"}, {"role": "user", "content": "costs 0.42"}]
+    assert with_placeholder_note(plain) == plain
+    named = [{"role": "system", "content": "rules"}, {"role": "user", "content": "PERSON_1 owns it"}]
+    assert with_placeholder_note(named)[0]["content"] == "rules\n\n" + PLACEHOLDER_NOTE
+    assert with_placeholder_note(named[1:])[0] == {"role": "system", "content": PLACEHOLDER_NOTE}
+    monkeypatch.setenv("CHRONICLE_PLACEHOLDER_NOTE", "off")
+    assert with_placeholder_note(named) == named
+
+
+def test_benchmark_proxy_gets_uncompressed_replies(monkeypatch):
+    import openai
+    seen = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kw):
+            seen.update(kw)
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=lambda **k: reply("ok")))
+
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+    LLMClient(api_key="k", base_url="http://127.0.0.1:54321/v1", use_cache=False).complete([{"role": "user", "content": "hi"}])
+    assert seen["default_headers"] == {"Accept-Encoding": "identity"}
+    seen.clear()
+    LLMClient(api_key="k", base_url="https://api.tokenfactory.nebius.com/v1/", use_cache=False).complete([{"role": "user", "content": "hi"}])
+    assert "default_headers" not in seen

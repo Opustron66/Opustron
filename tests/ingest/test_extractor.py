@@ -32,10 +32,10 @@ GOOD = json.dumps({"claims": [
 def test_extract_stamps_with_document_date_and_drops_hallucinations():
     ex = ClaimExtractor(FakeLLM([GOOD]))
     claims = ex.extract(DOC)
-    assert len(claims) == 2 and ex.dropped == 1
+    assert len(claims) == 2 and ex.dropped_total == 1
     assert all(c.observed_at == date(2026, 5, 12) and c.doc_id == "E:1" for c in claims)
     assert claims[0].valid_from == date(2026, 5, 12)
-    assert claims[1].valid_from == date(2026, 5, 15)  # "next Friday" vs doc date, not today
+    assert claims[1].valid_from == date(2026, 5, 22)  # "next Friday" = Friday of next week, vs doc date not today
 
 
 def test_cache_makes_rerun_free(tmp_path):
@@ -98,3 +98,175 @@ def test_closing_claim_keeps_start_unknown():
          "quote": "Alice Chen owns the payments service."}]})
     (c,) = ClaimExtractor(FakeLLM([reply])).extract(DOC)
     assert c.valid_from is None and c.valid_to == date(2026, 5, 12)
+
+
+def test_quote_check_ignores_markdown_formatting_but_not_content():
+    """related_to is now off-vocabulary (dropped at predicate); Bob's quote is hallucinated (dropped at quote)."""
+    doc = DOC.model_copy(update={"text": "**Branch:** `feature/x` → main\n- [Alice Chen](http://u) owns it"})
+    reply = json.dumps({"claims": [
+        {"subject": "x", "predicate": "related_to", "object": "main", "quote": "Branch: feature/x → main"},
+        {"subject": "Alice Chen", "predicate": "owns", "object": "it", "quote": "Alice Chen owns it"},
+        {"subject": "Bob", "predicate": "owns", "object": "it", "quote": "Bob owns it"},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    claims = ex.extract(doc)
+    assert len(claims) == 1  # only Alice's claim passes
+    assert ex.dropped["predicate"] >= 1  # related_to dropped
+    assert ex.dropped["quote"] >= 1  # Bob's hallucinated quote dropped
+    assert ex.dropped_total == 2
+
+# ---------------------------------------------------------------------------
+# New v3 tests: rendering, roster, classifier, predicate enforcement
+# ---------------------------------------------------------------------------
+
+def test_email_header_included_in_rendered_prompt():
+    """The model should see From/To/Subject so it can attribute claims correctly."""
+    from chronicle.ingest.extractor import render_for_llm
+    doc = Document(doc_id="E:1", text="Dana takes over payments from Alice.",
+                   doc_date=date(2026, 5, 12), kind="email",
+                   metadata={"from": "Alex Chen (@alex) <alex.chen@example.com>",
+                              "to": ["Dana Lee (@dana) <dana.lee@example.com>"],
+                              "subject": "Payments handover"})
+    rendered = render_for_llm(doc)
+    assert "From: Alex Chen" in rendered
+    assert "Subject: Payments handover" in rendered
+    assert "Dana takes over payments" in rendered
+
+
+def test_slack_mention_replaced_in_rendered_text():
+    from chronicle.ingest.extractor import render_for_llm
+    from chronicle.ingest.roster import Roster
+    roster = Roster(slack_ids={"U20094F0C2DD": "Lena Park"},
+                    aliases={"lena park": "Lena Park"}, people=["Lena Park"])
+    doc = Document(doc_id="S:1", text="can you look <@U20094F0C2DD>?",
+                   doc_date=date(2026, 4, 21), kind="slack")
+    rendered = render_for_llm(doc, roster)
+    assert "Lena Park" in rendered
+    assert "<@U20094F0C2DD>" not in rendered
+
+
+def test_ts_noise_stripped():
+    from chronicle.ingest.extractor import render_for_llm
+    doc = Document(doc_id="S:1",
+                   text="Sam Iverson (U200C6) [ts=1776761863.394136]: hello\nreply [ts=abc] done",
+                   doc_date=date(2026, 4, 21), kind="slack")
+    rendered = render_for_llm(doc)
+    assert "[ts=" not in rendered
+
+
+def test_classify_automated_folder():
+    from chronicle.ingest.extractor import classify_doc
+    doc = Document(doc_id="E:1", text="", doc_date=date(2026, 4, 16), kind="email",
+                   metadata={"folder": "inbox-automated"})
+    assert classify_doc(doc) == "automated"
+
+
+def test_classify_bot_sender():
+    from chronicle.ingest.extractor import classify_doc
+    doc = Document(doc_id="E:1", text="", doc_date=date(2026, 4, 16), kind="email",
+                   metadata={"from": "GitLab <gitlab@example.com>"})
+    assert classify_doc(doc) == "automated"
+
+
+def test_classify_human_email():
+    from chronicle.ingest.extractor import classify_doc
+    doc = Document(doc_id="E:1", text="", doc_date=date(2026, 4, 16), kind="email",
+                   metadata={"from": "Alex Chen (@alex) <alex.chen@example.com>", "folder": "inbox"})
+    assert classify_doc(doc) == "human"
+
+
+def test_off_vocabulary_predicate_dropped():
+    reply = json.dumps({"claims": [
+        {"subject": "Alice Chen", "predicate": "invitee", "object": "standup",
+         "quote": "Alice Chen owns the payments service."},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    # invitee -> member_of via PREDICATE_SYNONYMS, should NOT be dropped
+    claims = ex.extract(DOC)
+    assert any(c.predicate == "member_of" for c in claims)
+
+
+def test_truly_unknown_predicate_dropped():
+    reply = json.dumps({"claims": [
+        {"subject": "Alice Chen", "predicate": "totally_made_up", "object": "something",
+         "quote": "Alice Chen owns the payments service."},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    assert ex.extract(DOC) == []
+    assert ex.dropped["predicate"] == 1
+
+
+def test_attr_predicate_accepted():
+    reply = json.dumps({"claims": [
+        {"subject": "atlas", "predicate": "attr:p95_latency", "object": "120ms",
+         "quote": "Alice Chen owns the payments service."},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    claims = ex.extract(DOC)
+    assert len(claims) == 1 and claims[0].predicate == "attr:p95_latency"
+
+
+def test_non_entity_subject_dropped():
+    """A URL or file path as subject should be rejected."""
+    reply = json.dumps({"claims": [
+        {"subject": "https://gitlab.example.com/mr/284", "predicate": "status", "object": "open",
+         "quote": "Alice Chen owns the payments service."},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    assert ex.extract(DOC) == []
+    assert ex.dropped["non_entity"] == 1
+
+
+def test_mr_subject_allowed_for_status():
+    """!284 is a valid subject when predicate is status/completed."""
+    doc = Document(doc_id="E:1",
+                   text="merge request !284 was merged by Alice Chen.",
+                   doc_date=date(2026, 5, 12), kind="email",
+                   metadata={"folder": "inbox-automated",
+                              "from": "GitLab <gitlab@example.com>"})
+    reply = json.dumps({"claims": [
+        {"subject": "!284", "predicate": "completed", "object": "merged",
+         "quote": "merge request !284 was merged by Alice Chen."},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    claims = ex.extract(doc)
+    assert len(claims) == 1
+    assert claims[0].subject == "MR !284"
+
+
+def test_header_quote_passes_verification():
+    """A quote lifted from the rendered header (From/Subject) should verify."""
+    doc = Document(doc_id="E:2", text="See above.",
+                   doc_date=date(2026, 5, 12), kind="email",
+                   metadata={"from": "Alex Chen (@alex) <alex@example.com>",
+                              "subject": "Payments handover update"})
+    reply = json.dumps({"claims": [
+        {"subject": "Alex Chen", "predicate": "proposed", "object": "payments handover",
+         "quote": "Subject: Payments handover update"},
+    ]})
+    ex = ClaimExtractor(FakeLLM([reply]))
+    claims = ex.extract(doc)
+    assert len(claims) == 1
+
+
+def test_restored_quote_is_respelled_to_the_documents_alias():
+    from chronicle.ingest.extractor import restore_quote, _squash
+    doc = "Priya: camden's day to day goes to me from Monday."
+    haystack = _squash(doc)
+    quote = "Camden Row day to day goes to me"
+    assert restore_quote(quote, haystack, {"Camden Row": ["camden's"]}) == "camden's day to day goes to me"
+    assert restore_quote(quote, haystack, {}) == quote
+
+
+def test_extractor_keeps_quotes_the_router_restored_to_the_full_name():
+    doc = Document(doc_id="S:site@2026-05-12", text="Priya takes camden day to day from Monday.",
+                   doc_date=date(2026, 5, 12), kind="slack")
+    reply = json.dumps({"claims": [{"subject": "Priya", "predicate": "role", "object": "Camden Row day to day",
+                                    "valid_from": "2026-05-18", "quote": "Priya takes Camden Row day to day"}]})
+
+    class RouterLLM(FakeLLM):
+        def restore_variants(self):
+            return {"Camden Row": ["camden"]}
+
+    claims = ClaimExtractor(RouterLLM([reply])).extract(doc)
+    assert [c.quote for c in claims] == ["Priya takes camden day to day"]

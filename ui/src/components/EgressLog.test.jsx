@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import EgressLog from "./EgressLog";
 
@@ -77,4 +77,22 @@ test("says offline, not sample, when the server goes away after being live", asy
   expect(screen.getByText("real search")).toBeInTheDocument();
   expect(screen.queryByText("sample data")).not.toBeInTheDocument();
   vi.useRealTimers();
+});
+
+test("marks calls answered from the local cache as not sent", async () => {
+  const entries = [
+    { ts: "2026-10-17T12:00:01Z", model: "nvidia/Nemotron-3_5-Lightning", prompt_tokens: 0, completion_tokens: 0,
+      redacted: true, pii_types: ["PERSON"], request_preview: "cached call", cached: true },
+    { ts: "2026-10-17T12:00:00Z", model: "nvidia/Nemotron-3_5-Lightning", prompt_tokens: 40, completion_tokens: 9,
+      redacted: true, pii_types: ["PERSON"], request_preview: "sent call", cached: false },
+  ];
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => entries }));
+  render(<EgressLog />);
+
+  const cachedRow = (await screen.findByText("cached call")).closest(".egress-entry");
+  const sentRow = screen.getByText("sent call").closest(".egress-entry");
+  expect(cachedRow).toHaveClass("egress-cached");
+  expect(within(cachedRow).getByText("↺ cache · not sent")).toBeInTheDocument();
+  expect(sentRow).not.toHaveClass("egress-cached");
+  expect(within(sentRow).queryByText("↺ cache · not sent")).not.toBeInTheDocument();
 });

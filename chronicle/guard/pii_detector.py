@@ -1,6 +1,6 @@
 """PII detection: regex patterns + Presidio NER.
 
-Tier 1 (always available): regex for emails, phones, SSNs, cards, IPs, URLs.
+Tier 1 (always available): regex for emails, phones, SSNs, cards, IPs. URLs are not masked.
 Tier 2 (Presidio + spaCy en_core_web_sm, installed by default): names,
 organisations and places. If it can't load, a warning is logged once and only
 Tier 1 runs; ``ner_available()`` reports which.
@@ -9,6 +9,7 @@ Tier 1 runs; ``ner_available()`` reports which.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 
@@ -34,8 +35,10 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
     "IP_ADDRESS": re.compile(
         r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
     ),
-    "URL": re.compile(r"https?://[\w\-._~:/?#\[\]@!$&'()*+,;=%]+"),
 }
+# URLs are deliberately not masked: in work corpora they are merge-request and repo links
+# whose numbers and paths answer questions ("is !342 real?", "what is the GitLab path?"),
+# and masking them as URL_1 hid that. Emails inside a URL are still masked by EMAIL_ADDRESS.
 
 
 @dataclass(slots=True)
@@ -100,14 +103,104 @@ _PRESIDIO_ENTITY_TYPES = {
     "LOCATION",
     "NRP",
     "MEDICAL_LICENSE",
-    "URL",
     "US_DRIVER_LICENSE",
     "US_PASSPORT",
     "US_ITIN",
 }
 
 
+# spaCy tags these as entities in site-ops text ("Tower crane", "ETA"). They are
+# not identifying, and a model shown ORG_3 for "ETA" loses the question's meaning.
+GENERIC_TERMS = frozenset({
+    "tower", "eta", "row", "depot", "site", "crane", "gate", "board",
+    # Prompt scaffolding. spaCy tagged the "QUESTION:" label as a PERSON, and replacing that
+    # name everywhere turned every question into "PERSON_8: What is ...".
+    "question", "questions", "evidence", "answer", "answers", "context", "source", "sources",
+    "reference", "references", "note", "notes", "summary", "rules", "instructions",
+    # Never a safe short form of a longer name: "Project Beacon" must not claim "project".
+    "project", "projects", "team", "program", "programme", "operation", "initiative", "squad",
+    "workstream", "the", "new",
+})
+_ACRONYM_RE = re.compile(r"[A-Z][A-Z&]{1,3}")
+# Codenames like "Project Beacon" are not personal data, and spaCy tags them as PERSON,
+# which sent "who leads PERSON_9?" to the model.
+_NON_NAME_HEADS = frozenset({"project", "team", "program", "programme", "operation", "initiative",
+                             "squad", "workstream"})
+
+# Same convention as llm_client's env switches.
+_FALSY = ("0", "false", "no", "off")
+_names_off_warned = False
+
+
+def names_redacted() -> bool:
+    """False when CHRONICLE_REDACT_NAMES turns name detection off (benchmark runs only)."""
+    global _names_off_warned
+    if os.environ.get("CHRONICLE_REDACT_NAMES", "1").strip().lower() not in _FALSY:
+        return True
+    if not _names_off_warned:
+        _names_off_warned = True
+        logger.warning(
+            "Name redaction disabled by CHRONICLE_REDACT_NAMES: names, organisations and places "
+            "reach the LLM as-is. Emails, phones, IDs and URLs are still pseudonymised."
+        )
+    return False
+
+
+# Kept by CHRONICLE_REDACT_NAMES=person: people stay masked; organisations and places (which in a
+# site-operations corpus are mostly project and site names) reach the model as written.
+_PERSON_ONLY_DROPS = frozenset({"ORGANIZATION", "LOCATION", "NRP"})
+
+
+def person_only() -> bool:
+    """True when CHRONICLE_REDACT_NAMES=person: pseudonymise people, not organisations or places."""
+    return os.environ.get("CHRONICLE_REDACT_NAMES", "").strip().lower() == "person"
+
+
+def _is_generic(entity_type: str, value: str) -> bool:
+    # The word list applies to every type: spaCy also tags a bare "Tower" as PERSON.
+    value = value.strip()
+    if value.casefold() in GENERIC_TERMS:
+        return True
+    words = value.split()
+    if words and words[0].casefold() in _NON_NAME_HEADS:
+        return True
+    if entity_type == "PERSON" and value.isupper():
+        return True  # people's names are not written in capitals; labels and acronyms are
+    return entity_type in ("ORGANIZATION", "LOCATION") and bool(_ACRONYM_RE.fullmatch(value))
+
+
+_NAME_TYPES = frozenset({"PERSON", "ORGANIZATION", "LOCATION", "NRP"})
+# spaCy runs a name into the text after it ("Rohan Dasgupta: +1 jordan", JSON, code).
+# Also cut lists: "Atlas / Beacon / Compass" and "Alex and Sam" are several names, and as
+# one span they restored as a single run-together name ("src/Atlas / Beacon / Compass/...").
+_NAME_CUT = re.compile(r"[:\n(=\"{}\[\]/|]| and | & ")
+_DIGIT = re.compile(r"\d")
+
+
+def _clean_name(entity_type: str, start: int, end: int, value: str) -> tuple[int, int, str] | None:
+    """Trim a name span at the first separator and drop spans that are not names.
+
+    spaCy tags values as names in this corpus ("0.71¢", "300ms", "Q4", "KR3", "v1→v2"). Pass two
+    of pseudonymisation replaces a registered name everywhere in the request, so one such span
+    hides that value from every message. Names here never contain digits.
+    """
+    if entity_type not in _NAME_TYPES:
+        return start, end, value
+    cut = _NAME_CUT.search(value)
+    if cut:
+        value = value[: cut.start()]
+    trimmed = value.rstrip(" .,;-")
+    value = trimmed.lstrip(" .,;-")
+    start += len(trimmed) - len(value)
+    end = start + len(value)
+    if len(value) < 2 or _DIGIT.search(value) or not any(ch.isalpha() for ch in value):
+        return None
+    return start, end, value
+
+
 def _presidio_detect(text: str) -> list[PiiMatch]:
+    if not names_redacted():
+        return []
     analyzer = _get_presidio_analyzer()
     if analyzer is None:
         return []
@@ -116,11 +209,15 @@ def _presidio_detect(text: str) -> list[PiiMatch]:
         entities=list(_PRESIDIO_ENTITY_TYPES),
         language="en",
     )
-    return [
-        PiiMatch(r.entity_type, text[r.start : r.end], r.start, r.end)
-        for r in results
-        if r.score >= 0.6
-    ]
+    matches = []
+    for r in results:
+        if r.score < 0.6 or (person_only() and r.entity_type in _PERSON_ONLY_DROPS):
+            continue
+        cleaned = _clean_name(r.entity_type, r.start, r.end, text[r.start : r.end])
+        if cleaned is None or _is_generic(r.entity_type, cleaned[2]):
+            continue
+        matches.append(PiiMatch(r.entity_type, cleaned[2], cleaned[0], cleaned[1]))
+    return matches
 
 
 # ---------------------------------------------------------------------------
