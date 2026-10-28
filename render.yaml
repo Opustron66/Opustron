@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: chronicle
+    runtime: docker
+    region: singapore
+    plan: standard
+    numInstances: 1
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeployTrigger: off
+    disk:
+      name: chronicle-memory
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: CHRONICLE_WEB_USERNAME
+        sync: false
+      - key: CHRONICLE_WEB_PASSWORD
+        sync: false
+      - key: CHRONICLE_WEB_CHAT_ENABLED
+        value: "0"
+      - key: CHRONICLE_STATE_DIR
+        value: /data/state

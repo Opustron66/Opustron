@@ -1,0 +1,155 @@
+"""Production paths are exercised without model calls or credentials."""
+
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import Mock
+
+import pytest
+from fastapi.testclient import TestClient
+
+from chronicle.guard.egress_logger import EgressLogger
+from chronicle.guard.llm_client import LLMClient
+from chronicle.reason.models import AnswerResult
+from chronicle.schema import Claim
+from chronicle.web import create_app
+
+AUTH = ("viewer", "test-password")
+
+
+@pytest.fixture
+def setup(tmp_path, monkeypatch):
+    static = tmp_path / "ui"
+    static.mkdir()
+    (static / "index.html").write_text("<html>Chronicle production UI</html>")
+    (static / "app.js").write_text("console.log('built asset')")
+    state = tmp_path / "state"
+    state.mkdir()
+    claim = Claim(subject="Maya Patel", predicate="owns", object="billing service",
+                  valid_from="2026-05-01", observed_at="2026-05-01", doc_id="demo-1",
+                  quote="Maya Patel owns the billing service.")
+    (state / "claims.jsonl").write_text(claim.model_dump_json() + "\n", encoding="utf-8")
+    monkeypatch.setenv("CHRONICLE_WEB_USERNAME", AUTH[0])
+    monkeypatch.setenv("CHRONICLE_WEB_PASSWORD", AUTH[1])
+    monkeypatch.setenv("CHRONICLE_WEB_STATIC_DIR", str(static))
+    monkeypatch.setenv("CHRONICLE_STATE_DIR", str(state))
+    monkeypatch.setenv("CHRONICLE_WEB_CHAT_ENABLED", "0")
+    monkeypatch.setenv("CHRONICLE_WEB_ASKS_PER_MINUTE", "6")
+    monkeypatch.setattr(LLMClient, "complete", Mock(side_effect=AssertionError("No model calls permitted")))
+    monkeypatch.setattr("chronicle.web.get_logger", lambda: EgressLogger(tmp_path / "egress.log"))
+    return state
+
+
+def test_imported_memory_and_built_ui_share_one_origin(setup):
+    with TestClient(create_app()) as client:
+        assert client.get("/healthz").json() == {"status": "ok", "memory_loaded": True}
+        assert "production UI" in client.get("/", auth=AUTH).text
+        assert client.get("/app.js", auth=AUTH).status_code == 200
+        response = client.get("/api/facts", auth=AUTH)
+        assert response.json()[0]["subject"] == "Maya Patel"
+        assert response.headers["cache-control"] == "no-store"
+        assert client.get("/api/egress", auth=AUTH).json() == []
+        assert client.get("/api/does-not-exist", auth=AUTH).status_code == 404
+    assert (setup / "memory.sqlite3").is_file()
+
+
+@pytest.mark.parametrize("path", ["/", "/app.js", "/api/facts", "/api/egress"])
+def test_all_content_requires_login(setup, path):
+    with TestClient(create_app()) as client:
+        assert client.get(path).status_code == 401
+        assert client.get(path, auth=(AUTH[0], "wrong")).status_code == 401
+        assert client.get(path, headers={"Authorization": "Basic invalid!!!"}).status_code == 401
+
+
+def test_chat_is_disabled_even_with_login_and_model_key(setup, monkeypatch):
+    monkeypatch.setenv("NEBIUS_API_KEY", "dummy-not-a-real-key")
+    with TestClient(create_app()) as client:
+        response = client.post("/api/ask", auth=AUTH, json={"question": "Who owns billing?"})
+        assert response.status_code == 503
+        assert "disabled" in response.json()["detail"]
+
+
+def test_missing_login_fails_at_startup(setup, monkeypatch):
+    monkeypatch.delenv("CHRONICLE_WEB_PASSWORD")
+    with pytest.raises(ValueError, match="CHRONICLE_WEB_PASSWORD"):
+        create_app()
+
+
+@pytest.mark.parametrize("cap", ["0", "-1", "nan", "inf"])
+def test_enabled_chat_requires_a_finite_positive_budget(setup, monkeypatch, cap):
+    monkeypatch.setenv("CHRONICLE_WEB_CHAT_ENABLED", "1")
+    monkeypatch.setenv("CHRONICLE_SPEND_LIMIT_USD", cap)
+    with pytest.raises(ValueError, match="CHRONICLE_SPEND_LIMIT_USD"):
+        create_app()
+
+
+def test_enabled_chat_requires_credentials(setup, monkeypatch):
+    monkeypatch.setenv("CHRONICLE_WEB_CHAT_ENABLED", "1")
+    monkeypatch.setenv("CHRONICLE_SPEND_LIMIT_USD", "1")
+    monkeypatch.delenv("NEBIUS_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="API key"):
+        create_app()
+
+
+def test_chat_limit_and_cross_site_guard_before_answering(setup, monkeypatch):
+    monkeypatch.setenv("CHRONICLE_WEB_CHAT_ENABLED", "1")
+    monkeypatch.setenv("CHRONICLE_SPEND_LIMIT_USD", "1")
+    monkeypatch.setenv("NEBIUS_API_KEY", "dummy-not-a-real-key")
+    monkeypatch.setenv("CHRONICLE_WEB_ASKS_PER_MINUTE", "1")
+    answer = Mock(return_value=AnswerResult("Maya Patel", ["demo-1"]))
+    monkeypatch.setattr("chronicle.memory.server.answer_question", answer)
+    with TestClient(create_app()) as client:
+        question = {"question": "Who owns billing?"}
+        assert client.post("/api/ask", json=question).status_code == 401
+        assert client.post("/api/ask", auth=AUTH, json=question,
+                           headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
+        assert client.post("/api/ask", auth=AUTH, json=question).json()["answer"] == "Maya Patel"
+        response = client.post("/api/ask", auth=AUTH, json=question)
+        assert response.status_code == 429
+        assert response.headers["retry-after"] == "60"
+        answer.assert_called_once()
+
+
+def test_empty_memory_is_healthy_while_waiting_for_state(setup):
+    (setup / "claims.jsonl").unlink()
+    with TestClient(create_app()) as client:
+        assert client.get("/healthz").json() == {"status": "ok", "memory_loaded": False}
+        assert client.get("/api/facts", auth=AUTH).json() == []
+
+
+def test_import_loads_topic_pages_without_a_database_backup(setup):
+    page = {"kind": "topic", "page_id": "topic_billing", "title": "Billing owner",
+            "current": "Maya Patel", "valid_from": "2026-05-01",
+            "content": "TOPIC: Billing owner\nMaya Patel owns billing.",
+            "sources": [{"doc_id": "demo-1", "quote": "Maya Patel owns billing.",
+                         "observed_at": "2026-05-01"}]}
+    (setup / "pages.jsonl").write_text(json.dumps(page) + "\n", encoding="utf-8")
+    with TestClient(create_app()) as client:
+        facts = client.get("/api/facts", auth=AUTH).json()
+        assert {f["kind"] for f in facts} == {"claim", "topic"}
+
+
+def test_overlapping_questions_do_not_start_another_answer(setup, monkeypatch):
+    monkeypatch.setenv("CHRONICLE_WEB_CHAT_ENABLED", "1")
+    monkeypatch.setenv("CHRONICLE_SPEND_LIMIT_USD", "1")
+    monkeypatch.setenv("NEBIUS_API_KEY", "dummy-not-a-real-key")
+    entered, release = threading.Event(), threading.Event()
+
+    def answer(*args, **kwargs):
+        entered.set()
+        assert release.wait(5), "test did not release the first question"
+        return AnswerResult("Maya Patel", ["demo-1"])
+
+    model = Mock(side_effect=answer)
+    monkeypatch.setattr("chronicle.memory.server.answer_question", model)
+    with TestClient(create_app()) as client, ThreadPoolExecutor(max_workers=1) as pool:
+        question = {"question": "Who owns billing?"}
+        first = pool.submit(client.post, "/api/ask", auth=AUTH, json=question)
+        try:
+            assert entered.wait(5)
+            assert client.post("/api/ask", auth=AUTH, json=question).status_code == 429
+        finally:
+            release.set()
+        assert first.result(timeout=5).status_code == 200
+        model.assert_called_once()
