@@ -34,7 +34,8 @@ def test_ask_filters_evidence_and_returns_real_citations(memory, question, day, 
         other = "Noah Williams" if owner == "Maya Patel" else "Maya Patel"
         assert f'): {other} owns' not in prompt
         assert "Answer as of 2026-06-" in prompt
-        return {"answer": owner, "source_ids": [source, "invented", source]}
+        return {"answer": owner, "source_ids": [source, "invented", source],
+                "support": [{"quote": f"{owner} owns billing service"}]}
 
     with patch("chronicle.reason.answerer.llm.complete", side_effect=complete) as model:
         response = TestClient(create_app(memory)).post("/api/ask", json={"question": question, "as_of": day})

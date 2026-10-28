@@ -4,25 +4,135 @@ With ``tools`` the answerer is agentic: for up to ``MAX_ROUNDS`` model calls it 
 evidence (``search`` with new queries, or ``open`` a full source document) before answering, and
 the last round must answer. Without tools it answers in one call.
 """
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
+from itertools import pairwise
 
 from chronicle.guard import llm
 
 from .dates import annotate_dates
+from .grounding import unsupported
 from .models import AnswerResult, Evidence, QueryPlan
+
+SUPPORT = {"type": "array", "items": {
+    "type": "object",
+    "properties": {"doc_id": {"type": "string"}, "quote": {"type": "string"}},
+    "required": ["quote"],
+    "additionalProperties": False,
+}}
+TIMELINE = {"type": "array", "items": {
+    "type": "object",
+    "properties": {
+        "date": {"type": "string"},
+        "event": {"type": "string"},
+        "status": {"type": "string", "enum": ["stated", "proposed", "decided", "scheduled", "done"]},
+        "doc_id": {"type": "string"},
+    },
+    "required": ["date", "event", "status"],
+    "additionalProperties": False,
+}}
 
 ANSWER_SCHEMA = {
     "type": "object",
     "properties": {
         "answer": {"type": "string"},
         "source_ids": {"type": "array", "items": {"type": "string"}},
+        "support": SUPPORT,
     },
     "required": ["answer", "source_ids"],
     "additionalProperties": False,
 }
+# The timeline comes first so the model writes it before the answer.
+TIMELINE_SCHEMA = {
+    "type": "object",
+    "properties": {"timeline": TIMELINE, **ANSWER_SCHEMA["properties"]},
+    "required": ["timeline", "answer", "source_ids"],
+    "additionalProperties": False,
+}
+
+GROUNDING = """Support: also fill "support" with one to three short quotes copied word for word from the
+evidence (each under 30 words, with its document id) that state the names, numbers and status in
+your answer. Put nothing in the answer that you cannot quote. An answer saying the corpus does not
+record something needs no quotes."""
+
+TIMELINE_RULE = """Timeline first: before answering, fill "timeline" with the dated events about the
+subject of the question, oldest first (at most 12), each with its status (stated, proposed,
+decided, scheduled or done) and document id. A proposal is decided once the people involved
+commit to it; scheduled is not done. Then answer from the timeline: the state on the date asked,
+or where it started and where it ended."""
+
+_TIMELINE_Q = re.compile(
+    r"\bhow .{0,60}\bchanged\b|\bwhere it (?:started|ended)\b|\bover the (?:corpus )?(?:window|period)\b"
+    r"|\bstill (?:unaddressed|open|an open)\b|\b(?:has|had) anything been done\b|\bput in place\b",
+    re.IGNORECASE)
+
+
+def timeline_enabled() -> bool:
+    """CHRONICLE_TIMELINE=1: timeline-first answers. Off by default: on corpus A it fixed nothing
+    and turned one as-of answer into a refusal."""
+    return os.environ.get("CHRONICLE_TIMELINE", "0").lower() in ("1", "true", "yes", "on")
+
+
+def needs_timeline(plan: QueryPlan) -> bool:
+    """State-over-time questions: as-of, history, and "has anything been done / how did it change"."""
+    if not timeline_enabled():
+        return False
+    return plan.kind == "as_of" or plan.question_type == "history" or bool(_TIMELINE_Q.search(plan.question))
+
+
+# Question phrases repeated verbatim in the evidence. Run 5 answered "the prompt-prefix cache hit
+# rate on the smoke fixture" with figures from a later smoke test; only one line in the evidence
+# said "smoke fixture". Lines that repeat the question's rarer two-word phrases are listed first.
+_TOKEN = re.compile(r"[a-z0-9][a-z0-9'%!-]*")
+_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+_PHRASE_STOP = frozenset(
+    "a an the of on in at to for by from with and or but is are was were be been has had have do does did "
+    "what which who whom when where why how that this these those it its as into about than then there "
+    "their they them he she his her you your we our any all each both give name describe yes no not".split())
+KEY_LINES = 4
+MAX_PHRASE_DF = 3
+MAX_LINE = 400
+
+
+def _lines(text: str) -> list[str]:
+    """Whole lines (a chat message, a timeline entry); a long paragraph is cut into sentences."""
+    out = []
+    for line in text.splitlines():
+        out += [line] if len(line) <= MAX_LINE else _SENTENCE.split(line)
+    return [x.strip() for x in out if 20 <= len(x.strip()) <= MAX_LINE and not x.lstrip().startswith("TOPIC:")]
+
+
+def _phrases(text: str) -> set[str]:
+    words = _TOKEN.findall(text.lower())
+    return {f"{a} {b}" for a, b in pairwise(words) if a not in _PHRASE_STOP and b not in _PHRASE_STOP}
+
+
+def key_lines(question: str, evidence: list[Evidence]) -> list[str]:
+    """Up to ``KEY_LINES`` evidence lines that share a rare two-word phrase with the question,
+    rarest match first, each tagged with its document id."""
+    asked = _phrases(question)
+    if not asked:
+        return []
+    lines = []
+    for e in evidence:
+        for line in _lines(e.text):
+            if found := asked & _phrases(line):
+                lines.append((e.doc_id, line, found))
+    # Rarity counts documents, not lines: a topic, a fact and a chunk can all quote one sentence.
+    df = {p: len({doc_id for doc_id, _, found in lines if p in found}) for p in asked}
+    scored = {}
+    for doc_id, line, found in lines:
+        if line not in scored and any(df[p] <= MAX_PHRASE_DF for p in found):
+            scored[line] = (sum(1 / df[p] for p in found), doc_id)
+    ranked = sorted(scored.items(), key=lambda item: -item[1][0])[:KEY_LINES]
+    return [f"[{doc_id}] {line}" for line, (_, doc_id) in ranked]
+
+
+def key_lines_enabled() -> bool:
+    return os.environ.get("CHRONICLE_KEY_LINES", "1").lower() not in ("0", "false", "no", "off")
 
 FALLBACK_CONTRACT = """Answer the question from the memory you built out of the corpus.
 Rules:
@@ -57,19 +167,20 @@ ANSWER_FORM = """How to write the answer:
   plans or old proposals unless the question asks for the history.
 - When the question asks how many, or for each/all items, count every distinct one in the
   evidence (same name but different date, purpose or owner = distinct) and list them all.
+  Write the count with what it counts ("Two reports."), not a bare digit.
 - When the question asks for both numbers, or what something did to a value, give the value
   before and after ("from 40% to 65%").
 - When the question names a specific context (a fixture, environment, test, tier or date), use
   only figures stated for that exact context, not similar figures from other tests or later runs.
-- For who holds a role, answer from clear indirect evidence too: if documents tie a person to a
-  role or project ("Priya's team" builds Orion; Priya added Orion's registry), name the
-  best-supported person with their full name rather than saying the corpus does not record it.
-  This is only for people and roles, never for what happened at an event: an agenda or plan is not
-  a record of what was discussed or decided.
+- An agenda or plan is not a record of what was discussed or decided at an event.
 - A decision or commitment someone makes about their own work or calendar ("I'll take over the
   slot", "we're moving the sync to biweekly"), especially once the others agree, counts as a step
   taken: list it as in place. This does not apply to scheduled events (reviews, launches,
   cutovers, meetings): those still need evidence that they happened.
+- When a later message in the same thread moves or restates a deadline or time ("send it Mon
+  morning" after "by Mon EOD"), give the latest one.
+- "Who proposed / suggested / raised X" is the first person who suggested it, even as a question
+  ("worth porting to Atlas?"); approving, assigning or later repeating it is not proposing.
 - When the corpus does not record what was asked, say "The corpus does not record <it>." and
   describe no outcome."""
 
@@ -77,7 +188,9 @@ ANSWER_FORM = """How to write the answer:
 # the default from 30d to 14d" written after the date is the only statement of the old value.
 AS_OF_LATER = ("never report the new values they introduce as the answer. They can still show what held "
                'before: a change written later ("raised the limit from 5 to 8") means the old value (5) '
-               "held on the as-of date, so report the old value. Otherwise use them only to say that "
+               "held on the as-of date, so report the old value. A later reply that reviews a document "
+               'written by the as-of date ("the 30% target in your draft is a stretch") shows what that '
+               "document said, so report that too. Otherwise use them only to say that "
                "something had not happened yet, or was not yet decided, by the as-of date (and when it "
                "happened).")
 
@@ -127,8 +240,10 @@ AGENT_SCHEMA = {
     "type": "object",
     "properties": {
         "action": {"type": "string", "enum": ["answer", "search", "open"]},
+        "timeline": TIMELINE,
         "answer": {"type": "string"},
         "source_ids": {"type": "array", "items": {"type": "string"}},
+        "support": SUPPORT,
         "queries": {"type": "array", "items": {"type": "string"}},
         "doc_ids": {"type": "array", "items": {"type": "string"}},
     },
@@ -160,6 +275,9 @@ _ORDER = re.compile(r"\bin the order\b|earliest first|\border they happened\b", 
 _OUTCOME = re.compile(r"^\s*(how did|how was|what was the outcome|did)\b|\bwhat was (discussed|decided|announced)\b"
                       r"|\bwhat (were the findings|did .{1,60} conclude)\b", re.IGNORECASE)
 _TWO = re.compile(r"\b(two different|are different|is that right)\b", re.IGNORECASE)
+_STEPS = re.compile(r"\b(?:has|had|have) anything been done\b|\bstill (?:an )?open problem\b"
+                    r"|\bstill unaddressed\b|\bmitigations?\b", re.IGNORECASE)
+_ANYTHING_DONE = re.compile(r"\b(?:has|had|have) anything been done\b", re.IGNORECASE)
 
 
 def answer_template(plan: QueryPlan) -> str:
@@ -170,6 +288,12 @@ def answer_template(plan: QueryPlan) -> str:
                 '<latest value>." Give each value exactly as the documents state it.')
     if _ORDER.search(q):
         return "Answer shape: the items, earliest first, one per line, using the question's wording."
+    if _STEPS.search(q):
+        first = 'start with "Yes." and then ' if _ANYTHING_DONE.search(q) else ""
+        return ("Answer shape: if anyone had committed to a concrete change by then (someone taking over "
+                'a meeting, a sync moved to a slower cadence, a calendar block), ' + first + "name each "
+                "change with who made it and when. A commitment counts even if nobody reported it done "
+                "later. Call the problem still open only if nobody had committed to any change.")
     if _TWO.search(q):
         return 'Answer shape: "Yes. <first>: <what it is>. <second>: <what it is>." One short clause each.'
     if _OUTCOME.search(q) or plan.question_type == "abstention_risk":
@@ -190,10 +314,15 @@ def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last:
         reference += ('For "had X happened by then?" answer "Yes." or "No." first, then the value it held '
                       'on that date in positive form (e.g. "It was still in beta.", not "It had not '
                       'launched.") and, if it changed later, the date it changed.\n\n')
-    system = f"{_contract()}\n\n{EVIDENCE_GUIDE}\n\n{EVIDENCE_RULES}\n\n{ANSWER_FORM}"
+    system = f"{_contract()}\n\n{EVIDENCE_GUIDE}\n\n{EVIDENCE_RULES}\n\n{ANSWER_FORM}\n\n{GROUNDING}"
+    if needs_timeline(plan):
+        system += f"\n\n{TIMELINE_RULE}"
     if template := answer_template(plan):
         system += f"\n\n{template}"
     user = f"{reference}EVIDENCE:\n{context}\n\nQUESTION: {plan.question}"
+    if key_lines_enabled() and (lines := key_lines(plan.question, evidence)):
+        user += ("\n\nEvidence lines that repeat the question's own wording (when the question names a "
+                 "specific context, its figures are usually here):\n" + "\n".join(f"- {x}" for x in lines))
     if hint:
         user += f"\n\n{hint}"
     if agentic:
@@ -247,15 +376,21 @@ BRIEF = ("Keep your reasoning short: a few sentences at most. The answer must be
 
 def _complete(messages: list[dict], schema: dict, temperature: float = 0.0):
     """One model call; a reply cut off by the token limit (a reasoning model thinking too long)
-    is retried once with a request to think briefly."""
+    is retried with a request to think briefly, then once more with thinking off (on corpus A a
+    who-proposed question ran out of tokens twice and was scored as a refusal)."""
     kwargs = {"schema": schema, **({"temperature": temperature} if temperature else {})}
     try:
         return llm.complete(messages, **kwargs)
     except ValueError as exc:
         if "truncated reply" not in str(exc):
             raise
-        retry = [*messages[:-1], {**messages[-1], "content": messages[-1]["content"] + "\n\n" + BRIEF}]
+    retry = [*messages[:-1], {**messages[-1], "content": messages[-1]["content"] + "\n\n" + BRIEF}]
+    try:
         return llm.complete(retry, **kwargs)
+    except ValueError as exc:
+        if "truncated reply" not in str(exc):
+            raise
+        return llm.complete(retry, **kwargs, thinking=False)
 
 
 def _key(e: Evidence) -> tuple:
@@ -274,8 +409,8 @@ def generate_answer(plan: QueryPlan, evidence: list[Evidence], tools: Tools | No
         return AnswerResult("Not in the corpus", [])
     evidence = list(evidence)
     if tools is None:
-        parsed = _complete(_messages(plan, evidence, agentic=False, last=True, hint=hint), ANSWER_SCHEMA,
-                           temperature)
+        parsed = _complete(_messages(plan, evidence, agentic=False, last=True, hint=hint),
+                           TIMELINE_SCHEMA if needs_timeline(plan) else ANSWER_SCHEMA, temperature)
     else:
         note = ""
         for round_number in range(1, MAX_ROUNDS + 1):
@@ -304,4 +439,6 @@ def generate_answer(plan: QueryPlan, evidence: list[Evidence], tools: Tools | No
     answer = parsed.get("answer", "Not in the corpus")
     if not isinstance(answer, str) or not answer.strip():
         answer = "Not in the corpus"
-    return AnswerResult(answer=answer, source_ids=ids)
+    texts = [t for e in evidence for t in (e.text, _render(e))]
+    return AnswerResult(answer=answer, source_ids=ids,
+                        unsupported=unsupported(answer, parsed.get("support"), plan.question, texts))

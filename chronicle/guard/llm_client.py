@@ -179,8 +179,12 @@ class LLMClient:
         model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        thinking: bool | None = None,
     ) -> str | dict[str, Any]:
         """Call the LLM, routing PII through the privacy router.
+
+        ``thinking`` overrides the client's thinking switch for this call only
+        (the answerer turns it off after a reply ran out of tokens while thinking).
 
         `schema` may be a bare JSON Schema or an OpenAI ``json_schema``
         envelope ({"name": ..., "schema": {...}}):
@@ -208,8 +212,9 @@ class LLMClient:
 
         # Check cache
         budget = max_tokens or self.max_tokens
+        think = self.thinking if thinking is None else thinking
         cache_key = self._cache_key(redacted_messages, schema, model or self._default_model,
-                                    max_tokens=budget, temperature=temperature)
+                                    max_tokens=budget, temperature=temperature, thinking=think)
         cached = self._load_cache(cache_key) if self._use_cache else None
         cache_hit = cached is not None and _cacheable_reply(cached, schema)
         if cache_hit:
@@ -217,7 +222,7 @@ class LLMClient:
         else:
             spend_limit.check(get_logger().records)
             raw, prompt_tokens, completion_tokens, finish_reason = self._call_api(
-                redacted_messages, schema, model, temperature, budget
+                redacted_messages, schema, model, temperature, budget, think
             )
 
         # Re-identify pseudonyms in the response
@@ -263,6 +268,7 @@ class LLMClient:
         model: str | None,
         temperature: float,
         max_tokens: int,
+        thinking: bool | None = None,
     ) -> tuple[str, int, int, str | None]:
         """Return content, usage and finish reason so incomplete replies cannot be cached."""
         create = self._get_transport()
@@ -276,8 +282,8 @@ class LLMClient:
         if schema is not None and self._structured:
             envelope = schema if _is_wrapped(schema) else {"name": "response", "schema": schema}
             kwargs["response_format"] = {"type": "json_schema", "json_schema": envelope}
-        if self.thinking is not None:
-            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": self.thinking}}
+        if thinking is not None:
+            kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": thinking}}
 
         try:
             resp = create(**kwargs)
@@ -324,11 +330,12 @@ class LLMClient:
         *,
         max_tokens: int | None = None,
         temperature: float = 0.0,
+        thinking: bool | None = None,
     ) -> str:
         payload = json.dumps({"version": 2, "messages": messages, "schema": schema, "model": model,
                               "base_url": _cache_endpoint(self._base_url),
                               "max_tokens": max_tokens or self.max_tokens, "temperature": temperature,
-                              "structured": self._structured, "thinking": self.thinking}, sort_keys=True)
+                              "structured": self._structured, "thinking": thinking}, sort_keys=True)
         return hashlib.sha256(payload.encode()).hexdigest()
 
     def _load_cache(self, key: str) -> str | None:

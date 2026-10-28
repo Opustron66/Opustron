@@ -9,6 +9,7 @@ from chronicle.reason.answerer import (
     ANSWER_FORM,
     EVIDENCE_RULES,
     FALLBACK_CONTRACT,
+    GROUNDING,
     generate_answer,
 )
 from chronicle.reason.models import Evidence, QueryPlan
@@ -41,5 +42,5 @@ def test_external_benchmark_contract_does_not_remove_evidence_rules(monkeypatch)
         generate_answer(QueryPlan("Was the demo completed?"), [Evidence("demo", "Demo scheduled June 30.")])
     system = complete.call_args.args[0][0]["content"]
     assert contract.ANSWER_CONTRACT in system
-    assert EVIDENCE_RULES in system and system.endswith(ANSWER_FORM)
+    assert EVIDENCE_RULES in system and ANSWER_FORM in system and system.endswith(GROUNDING)
     assert "Something only scheduled has not happened" not in FALLBACK_CONTRACT

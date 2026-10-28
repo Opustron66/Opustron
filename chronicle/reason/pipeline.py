@@ -10,6 +10,7 @@ from chronicle.memory import MemoryAPI
 
 from .abstention import should_abstain
 from .answerer import Tools, answer_template, generate_answer, generate_corpus_answer
+from .grounding import found_anywhere
 from .models import AnswerResult, QueryPlan
 from .planner import plan_query, understand
 from .retriever import (
@@ -65,6 +66,34 @@ _HARD = re.compile(
 VOTE_TEMPERATURE = 0.6
 _YES_NO = re.compile(r"^\W*(yes|no)\b", re.IGNORECASE)
 _FIRST_SENTENCE = re.compile(r"[.!?](?:\s|$)|\n")
+
+
+def grounding_enabled() -> bool:
+    return os.environ.get("CHRONICLE_GROUNDING", "1").lower() not in ("0", "false", "no", "off")
+
+
+def recheck_hint(missing: list[str]) -> str:
+    return ("Check your previous answer: these parts were not backed by a quote copied word for word from "
+            f"the evidence: {', '.join(missing[:8])}. Re-read the evidence. Answer the same question: keep "
+            "each part the evidence supports and quote the exact lines for it, and correct any part it "
+            "contradicts. Only if the evidence does not support an answer at all, say the corpus does "
+            "not record it.")
+
+
+def recheck(plan: QueryPlan, result: AnswerResult, again: Callable[[str], AnswerResult],
+            evidence_texts: list[str] = ()) -> AnswerResult:
+    """One correction pass for an answer with unsupported names/numbers; the better-backed one stays.
+    A refusal replaces an answer only when none of its unsupported parts occur anywhere in the
+    evidence: on corpus A a retry turned a right "30% reduction target" (30% was in the evidence,
+    just not quoted) into "the corpus does not record", and correctly refused a made-up status."""
+    if not result.unsupported or gave_up(result.answer):
+        return result
+    retry = again(recheck_hint(result.unsupported))
+    if not retry.answer.strip():
+        return result
+    if gave_up(retry.answer):
+        return retry if not found_anywhere(result.unsupported, evidence_texts) else result
+    return retry if len(retry.unsupported) < len(result.unsupported) else result
 
 
 def positive_form_enabled() -> bool:
@@ -124,6 +153,17 @@ def positive_form(plan: QueryPlan, result: AnswerResult) -> AnswerResult:
     return AnswerResult(rewritten.strip(), result.source_ids)
 
 
+# The grader recognises "does not record" as a refusal but not "does not confirm", which the
+# evidence rules themselves suggest ("the corpus does not confirm whether it happened").
+_CONFIRM = re.compile(r"\b((?:corpus|evidence|documents?|records?)\s+)(?:does|do|did) not confirm\b",
+                      re.IGNORECASE)
+
+
+def record_wording(result: AnswerResult) -> AnswerResult:
+    answer = _CONFIRM.sub(r"\1does not record", result.answer)
+    return result if answer == result.answer else AnswerResult(answer, result.source_ids)
+
+
 def is_hard(plan: QueryPlan) -> bool:
     return plan.kind == "as_of" or bool(_HARD.search(plan.question))
 
@@ -166,13 +206,16 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
         result = generate_answer(plan, evidence, tools)
         if vote_enabled() and is_hard(plan):
             result = vote(result, lambda t: generate_answer(plan, evidence, tools, temperature=t))
+        if grounding_enabled():
+            result = recheck(plan, result, lambda hint: generate_answer(plan, evidence, tools, hint),
+                             [e.text for e in evidence])
         if gave_up(result.answer) and second_look_enabled():
             # Kept only when it answers and cites, so a correct "not recorded" survives a retry that
             # finds nothing.
             retry = generate_answer(plan, retrieve_memory(plan, memory, state=path, **WIDE), tools, SECOND_LOOK)
             if retry.source_ids and not gave_up(retry.answer):
                 result = retry
-        return positive_form(plan, result) if positive_form_enabled() else result
+        return record_wording(positive_form(plan, result) if positive_form_enabled() else result)
     finally:
         if owned:
             memory.close()
