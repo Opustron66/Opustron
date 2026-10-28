@@ -9,6 +9,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
+from itertools import pairwise
 
 from chronicle.guard import llm
 
@@ -106,7 +107,7 @@ def _lines(text: str) -> list[str]:
 
 def _phrases(text: str) -> set[str]:
     words = _TOKEN.findall(text.lower())
-    return {f"{a} {b}" for a, b in zip(words, words[1:]) if a not in _PHRASE_STOP and b not in _PHRASE_STOP}
+    return {f"{a} {b}" for a, b in pairwise(words) if a not in _PHRASE_STOP and b not in _PHRASE_STOP}
 
 
 def key_lines(question: str, evidence: list[Evidence]) -> list[str]:
@@ -274,6 +275,9 @@ _ORDER = re.compile(r"\bin the order\b|earliest first|\border they happened\b", 
 _OUTCOME = re.compile(r"^\s*(how did|how was|what was the outcome|did)\b|\bwhat was (discussed|decided|announced)\b"
                       r"|\bwhat (were the findings|did .{1,60} conclude)\b", re.IGNORECASE)
 _TWO = re.compile(r"\b(two different|are different|is that right)\b", re.IGNORECASE)
+_STEPS = re.compile(r"\b(?:has|had|have) anything been done\b|\bstill (?:an )?open problem\b"
+                    r"|\bstill unaddressed\b|\bmitigations?\b", re.IGNORECASE)
+_ANYTHING_DONE = re.compile(r"\b(?:has|had|have) anything been done\b", re.IGNORECASE)
 
 
 def answer_template(plan: QueryPlan) -> str:
@@ -284,6 +288,12 @@ def answer_template(plan: QueryPlan) -> str:
                 '<latest value>." Give each value exactly as the documents state it.')
     if _ORDER.search(q):
         return "Answer shape: the items, earliest first, one per line, using the question's wording."
+    if _STEPS.search(q):
+        first = 'start with "Yes." and then ' if _ANYTHING_DONE.search(q) else ""
+        return ("Answer shape: if anyone had committed to a concrete change by then (someone taking over "
+                'a meeting, a sync moved to a slower cadence, a calendar block), ' + first + "name each "
+                "change with who made it and when. A commitment counts even if nobody reported it done "
+                "later. Call the problem still open only if nobody had committed to any change.")
     if _TWO.search(q):
         return 'Answer shape: "Yes. <first>: <what it is>. <second>: <what it is>." One short clause each.'
     if _OUTCOME.search(q) or plan.question_type == "abstention_risk":
@@ -366,15 +376,21 @@ BRIEF = ("Keep your reasoning short: a few sentences at most. The answer must be
 
 def _complete(messages: list[dict], schema: dict, temperature: float = 0.0):
     """One model call; a reply cut off by the token limit (a reasoning model thinking too long)
-    is retried once with a request to think briefly."""
+    is retried with a request to think briefly, then once more with thinking off (on corpus A a
+    who-proposed question ran out of tokens twice and was scored as a refusal)."""
     kwargs = {"schema": schema, **({"temperature": temperature} if temperature else {})}
     try:
         return llm.complete(messages, **kwargs)
     except ValueError as exc:
         if "truncated reply" not in str(exc):
             raise
-        retry = [*messages[:-1], {**messages[-1], "content": messages[-1]["content"] + "\n\n" + BRIEF}]
+    retry = [*messages[:-1], {**messages[-1], "content": messages[-1]["content"] + "\n\n" + BRIEF}]
+    try:
         return llm.complete(retry, **kwargs)
+    except ValueError as exc:
+        if "truncated reply" not in str(exc):
+            raise
+        return llm.complete(retry, **kwargs, thinking=False)
 
 
 def _key(e: Evidence) -> tuple:

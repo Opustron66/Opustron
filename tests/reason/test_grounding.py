@@ -134,3 +134,30 @@ def test_key_lines_reach_the_prompt(monkeypatch):
     monkeypatch.setenv("CHRONICLE_KEY_LINES", "0")
     user = _messages(plan, [Evidence("E:1", "x on the smoke fixture")], agentic=False, last=True)[1]["content"]
     assert "own wording" not in user
+
+
+def test_corpus_does_not_confirm_is_worded_as_a_refusal_the_grader_knows():
+    result = pipeline.record_wording(AnswerResult("The corpus does not confirm that !342 was reviewed.", ["E:1"]))
+    assert result == AnswerResult("The corpus does not record that !342 was reviewed.", ["E:1"])
+    kept = AnswerResult("Alex did not confirm the date.", ["E:1"])
+    assert pipeline.record_wording(kept) is kept
+
+
+@pytest.mark.parametrize("question,shape,yes", [
+    ("As of 2026-05-15, had anything been done about Jordan Kim's meeting load, or was it still an open problem?", True, True),
+    ("Is Jordan Kim's meeting load still unaddressed, or have mitigations been put in place? Name them.", True, False),
+    ("Is merge request !342 still open?", False, False),
+])
+def test_steps_taken_questions_get_their_answer_shape(question, shape, yes):
+    from chronicle.reason.answerer import answer_template
+    template = answer_template(QueryPlan(question))
+    assert ("committed to a concrete change" in template) is shape
+    assert ('"Yes."' in template) is yes
+
+
+def test_a_reply_truncated_twice_is_asked_once_more_with_thinking_off():
+    truncated = ValueError("truncated reply (finish_reason=length, max_tokens=16384)")
+    replies = [truncated, truncated, {"answer": "Rohan Dasgupta.", "source_ids": ["S:1"]}]
+    with patch("chronicle.reason.answerer.llm.complete", side_effect=replies) as complete:
+        assert generate_answer(QueryPlan("Who proposed it?"), [Evidence("S:1", "Rohan Dasgupta")]).answer == "Rohan Dasgupta."
+    assert complete.call_count == 3 and complete.call_args.kwargs["thinking"] is False

@@ -262,3 +262,14 @@ def test_benchmark_proxy_gets_uncompressed_replies(monkeypatch):
     seen.clear()
     LLMClient(api_key="k", base_url="https://api.tokenfactory.nebius.com/v1/", use_cache=False).complete([{"role": "user", "content": "hi"}])
     assert "default_headers" not in seen
+
+
+def test_thinking_can_be_switched_per_call(monkeypatch):
+    monkeypatch.delenv("CHRONICLE_THINKING", raising=False)
+    t = Recorder()
+    client = LLMClient(transport=t)
+    msgs = [{"role": "user", "content": "same prompt"}]
+    client.complete(msgs)
+    client.complete(msgs, thinking=False)  # different setting: not served from the first call's cache
+    assert "extra_body" not in t.calls[0]
+    assert t.calls[1]["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}

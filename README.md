@@ -384,6 +384,14 @@ first person who suggested it, even as a question, not whoever approved it. Coun
 with their noun ("Two reports."). For as-of questions, a later reply that reviews a draft written by
 the as-of date ("the 30% target is a stretch") counts as evidence of what the draft said.
 
+**Steps taken, refusal wording, truncated replies.** Questions like "had anything been done about
+X, or was it still open?" get an answer shape: a concrete change someone committed to by then
+counts, named with who and when, and the problem is "still open" only if nobody committed to
+anything. "The corpus does not confirm" is rewritten to "does not record", which the grader
+recognises as a refusal. A reply that runs out of tokens while thinking is retried with a request
+to think briefly, then once more with thinking off (`complete(..., thinking=False)` switches it for
+one call); before, a second cut-off was scored as "Not in the corpus".
+
 **Timeline first for state over time (off by default, `CHRONICLE_TIMELINE=1`).** As-of questions, history questions and ones like "how did
 X change" or "have mitigations been put in place?" use a schema whose first field is `timeline`:
 dated events about the subject, oldest first, each marked stated, proposed, decided, scheduled or

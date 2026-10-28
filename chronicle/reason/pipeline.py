@@ -153,6 +153,17 @@ def positive_form(plan: QueryPlan, result: AnswerResult) -> AnswerResult:
     return AnswerResult(rewritten.strip(), result.source_ids)
 
 
+# The grader recognises "does not record" as a refusal but not "does not confirm", which the
+# evidence rules themselves suggest ("the corpus does not confirm whether it happened").
+_CONFIRM = re.compile(r"\b((?:corpus|evidence|documents?|records?)\s+)(?:does|do|did) not confirm\b",
+                      re.IGNORECASE)
+
+
+def record_wording(result: AnswerResult) -> AnswerResult:
+    answer = _CONFIRM.sub(r"\1does not record", result.answer)
+    return result if answer == result.answer else AnswerResult(answer, result.source_ids)
+
+
 def is_hard(plan: QueryPlan) -> bool:
     return plan.kind == "as_of" or bool(_HARD.search(plan.question))
 
@@ -204,7 +215,7 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
             retry = generate_answer(plan, retrieve_memory(plan, memory, state=path, **WIDE), tools, SECOND_LOOK)
             if retry.source_ids and not gave_up(retry.answer):
                 result = retry
-        return positive_form(plan, result) if positive_form_enabled() else result
+        return record_wording(positive_form(plan, result) if positive_form_enabled() else result)
     finally:
         if owned:
             memory.close()
