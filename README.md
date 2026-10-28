@@ -344,7 +344,14 @@ more. The retry replaces the first answer only if it answers and cites a documen
 **Voting on hard questions.** Between identical benchmark runs the answers that flipped were mostly
 yes/no, "which one", "how many" and as-of questions (6 of 15 disambiguation questions on corpus A).
 With `CHRONICLE_VOTE=1` those are answered a second time at temperature 0.6; if the two agree the
-first stands, otherwise a third answer decides. About 32 of corpus A's 186 questions qualify.
+first stands, otherwise a third answer decides. About 44 of corpus A's 186 questions qualify.
+Two answers agree when they make the same claims (the yes/no, a refusal, or the names, numbers and a
+short answer's words, with Jaccard overlap of at least 0.5), not when their first sentences match
+word for word. With no two agreeing, the most typical answer stays: the one whose claims overlap
+most with the other two. The exact-sentence check almost never matched free text, so the vote fell
+back to the first answer; across runs 4-7, 27% of voted questions flipped against 6% of the rest.
+Replaying those runs' answers as vote samples, the claim check picks a right answer 89.1% of the
+time on voted questions, against 88.5% for the old check and 86.4% with no vote.
 
 **Positive-form check.** The grader reads a value in a clause that also holds "not", "no longer",
 "rather than" or "instead of" as denied, and the model kept answering "NOT shared (duplicated)"
