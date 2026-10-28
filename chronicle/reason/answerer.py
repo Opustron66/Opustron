@@ -303,9 +303,11 @@ def answer_template(plan: QueryPlan) -> str:
                 "sentence that the corpus does not record it (e.g. it was only scheduled); do not "
                 "describe an outcome.")
     if _EITHER.search(q) and not _YES_NO_ASKED.search(q):
-        return ("Answer shape: the question offers options. Start with the option that holds, in the "
-                'question\'s own words ("It was still an open problem." or "Mitigations have been put '
-                'in place: ..."), not "Yes." or "No.", then the facts that show it, each with who and when.')
+        # No example options: run 7 copied "It was still an open problem." onto a question about
+        # code changes in flight.
+        return ("Answer shape: the question offers options. Start by restating the option that holds, "
+                'using the question\'s own words for that option, not "Yes." or "No.", then the facts '
+                "that show it, each with who and when.")
     return ""
 
 
