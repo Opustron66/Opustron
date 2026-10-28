@@ -178,3 +178,10 @@ def test_both_numbers_questions_need_two_figures_beyond_the_question(answer, mis
 def test_has_it_been_questions_get_the_refusal_shape():
     from chronicle.reason.answerer import answer_template
     assert "does not record it" in answer_template(QueryPlan("Has merge request !342 been opened and reviewed?"))
+
+
+def test_key_lines_match_the_last_part_of_a_hyphenated_question_word():
+    evidence = [Evidence("S:1", "skimmed: the \"30% reduction\" target is a real stretch", "2026-05-14"),
+                Evidence("S:2", "cost dashboards are up"), Evidence("S:3", "target dates for Q3")]
+    lines = key_lines("As of 2026-05-12, what cost-reduction target did Sam's RFC v2 draft carry?", evidence)
+    assert lines and lines[0].startswith("[S:1]")
