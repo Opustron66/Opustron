@@ -233,6 +233,17 @@ def open_documents(plan: QueryPlan, memory: MemoryAPI, doc_ids: list[str], state
     return out
 
 
+def corpus_evidence(state: Path | None) -> list[Evidence]:
+    """Every source document, oldest first, for whole-corpus answering. Not cut at an as-of date:
+    the corpus is the same prefix for every question, so the provider can cache it."""
+    path = state / DOCS_FILE if state is not None else None
+    if path is None or not path.is_file():
+        return []
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows.sort(key=lambda r: (r.get("date") or "", r["doc_id"]))
+    return [Evidence(r["doc_id"], r["text"], r.get("date") or "", 0.0, kind="chunk") for r in rows]
+
+
 def open_state(state: str | Path) -> MemoryAPI:
     """Sync and open the adapter's persistent state (the caller closes it)."""
     state = Path(state)

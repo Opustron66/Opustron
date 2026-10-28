@@ -6,14 +6,27 @@ from pathlib import Path
 from chronicle.memory import MemoryAPI
 
 from .abstention import should_abstain
-from .answerer import Tools, generate_answer
+from .answerer import Tools, generate_answer, generate_corpus_answer
 from .models import AnswerResult
 from .planner import plan_query, understand
-from .retriever import WIDE, open_documents, open_state, retrieve_memory, search_more
+from .retriever import (
+    WIDE,
+    corpus_evidence,
+    open_documents,
+    open_state,
+    retrieve_memory,
+    search_more,
+)
 
 
 def agentic_enabled() -> bool:
     return os.environ.get("CHRONICLE_AGENTIC", "1").lower() not in ("0", "false", "no", "off")
+
+
+def full_corpus_enabled() -> bool:
+    """CHRONICLE_FULL_CORPUS=1: answer every question over the whole corpus instead of retrieved
+    evidence. Off by default; for small corpora that fit the model's context."""
+    return os.environ.get("CHRONICLE_FULL_CORPUS", "0").lower() in ("1", "true", "yes", "on")
 
 
 def second_look_enabled() -> bool:
@@ -39,6 +52,10 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
     memory = open_state(state) if owned else state
     path = Path(state) if owned else None
     try:
+        if full_corpus_enabled():
+            if path is None and memory.database.path != ":memory:":
+                path = Path(memory.database.path).parent
+            return generate_corpus_answer(plan, corpus_evidence(path))
         evidence = retrieve_memory(plan, memory, state=path)
         if should_abstain(evidence):
             return AnswerResult("Not in the corpus", [])

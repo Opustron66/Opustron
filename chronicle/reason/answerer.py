@@ -168,6 +168,45 @@ def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last:
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+CORPUS_GUIDE = """The user message starts with the whole corpus: every DOCUMENT, oldest first, each with
+its id and the date it was written. A later document may supersede an earlier one. Cite the
+document ids that support your answer."""
+
+
+def corpus_messages(plan: QueryPlan, corpus: list[Evidence]) -> list[dict]:
+    """Whole-corpus prompt. Everything that is the same for every question comes first (system
+    prompt, then the corpus) so the provider's prompt cache serves it; the question comes last."""
+    system = f"{_contract()}\n\n{CORPUS_GUIDE}\n\n{EVIDENCE_RULES}\n\n{ANSWER_FORM}"
+    tail = []
+    if plan.reference_date:
+        day = plan.reference_date.isoformat()
+        tail.append(f"Answer as of {day}. Documents written after {day} were not known then: never report "
+                    "their values as the answer. Use them only to say that something had not happened yet, "
+                    'or was not yet decided, by that date (and when it happened). For "had X happened by '
+                    'then?" answer "Yes." or "No." first, then the value it held on that date in positive form.')
+    if template := answer_template(plan):
+        tail.append(template)
+    context = "\n\n".join(_render(e) for e in corpus)
+    user = f"CORPUS:\n{context}\n\n" + "".join(f"{t}\n\n" for t in tail) + f"QUESTION: {plan.question}"
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def generate_corpus_answer(plan: QueryPlan, corpus: list[Evidence]) -> AnswerResult:
+    """One call over the whole corpus, no retrieval and no tools."""
+    if not corpus:
+        return AnswerResult("Not in the corpus", [])
+    parsed = _complete(corpus_messages(plan, corpus), ANSWER_SCHEMA)
+    if not isinstance(parsed, dict):
+        raise ValueError("LLM returned no JSON object")
+    allowed = {e.doc_id for e in corpus}
+    ids = parsed.get("source_ids") if isinstance(parsed.get("source_ids"), list) else []
+    ids = list(dict.fromkeys(i for i in ids if isinstance(i, str) and i in allowed))
+    answer = parsed.get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        answer = "Not in the corpus"
+    return AnswerResult(answer=answer, source_ids=ids)
+
+
 BRIEF = ("Keep your reasoning short: a few sentences at most. The answer must be one short "
          "JSON object.")
 

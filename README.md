@@ -51,6 +51,7 @@ set -a; source .env; set +a
 | `CHRONICLE_REDACT_RECALL` | Hermes plugin: `0` stops masking emails/phones/IDs in recalled memory |
 | `CHRONICLE_REDACT_NAMES` | Benchmark runs only: `off` stops pseudonymising names, organisations and places (emails/phones/IDs stay masked); `person` masks people only, leaving organisations and places. Unset = on |
 | `CHRONICLE_SECOND_LOOK` | `off` disables the wider retry for answers that say the corpus is silent. Unset = on |
+| `CHRONICLE_FULL_CORPUS` | `1` answers every question over the whole corpus (all documents, oldest first) instead of retrieved evidence; for corpora that fit the model context. Unset = off |
 
 ## Calling a model: always use `chronicle.guard.llm`
 
@@ -328,6 +329,11 @@ first. Retrieval packs about 10k tokens of evidence (`CHAR_BUDGET` 40,000 charac
 retrieved again with about 25k tokens of evidence (`WIDE` in `retriever.py`) and answered once
 more. The retry replaces the first answer only if it answers and cites a document, so a correct
 "not recorded" stands when the wider search finds nothing. `CHRONICLE_SECOND_LOOK=off` disables it.
+
+**Whole-corpus answering (experiment).** `CHRONICLE_FULL_CORPUS=1` skips retrieval and gives the
+model every document, oldest first, in one prompt (corpus A is about 120k tokens; Nemotron Ultra
+takes 1M). The system prompt and the corpus come before anything question-specific, so the
+provider's prompt cache serves that prefix at the cached-input price.
 
 **Live egress log.** In a second terminal, run:
 
