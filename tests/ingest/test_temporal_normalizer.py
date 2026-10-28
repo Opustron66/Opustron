@@ -118,3 +118,33 @@ def test_next_weekday_is_in_the_following_calendar_week():
     assert resolve("this Friday", thu).start == date(2026, 4, 17)
     sun = date(2026, 5, 17)  # Sunday still belongs to the week that started Mon 11 May
     assert resolve("next Monday", sun).start == date(2026, 5, 18)
+
+
+DAY_RANGES = [
+    ("May 5–18", D(2026, 5, 5), D(2026, 5, 18)),
+    ("July 8-10", D(2026, 7, 8), D(2026, 7, 10)),
+    ("June 8 - 10", D(2026, 6, 8), D(2026, 6, 10)),
+    ("May 5th to 18th", D(2026, 5, 5), D(2026, 5, 18)),
+    ("8–10 July", D(2026, 7, 8), D(2026, 7, 10)),
+    ("8 June – 2 July", D(2026, 6, 8), D(2026, 7, 2)),
+    ("June 8 through July 2", D(2026, 6, 8), D(2026, 7, 2)),
+    ("May 5–18, 2027", D(2027, 5, 5), D(2027, 5, 18)),
+    ("Dec 28 - Jan 3", D(2026, 12, 28), D(2027, 1, 3)),
+]
+
+
+@pytest.mark.parametrize("expr,start,end", DAY_RANGES)
+def test_day_ranges_keep_the_document_year(expr, start, end):
+    r = resolve(expr, REF)
+    assert (r.start, r.end, r.precision) == (start, end, "day")
+
+
+def test_day_range_needs_real_months():
+    assert resolve("in 5 to 7 days", REF).start != date(2026, 5, 5)
+    assert resolve("May 31 - 40", REF).start is None
+
+
+def test_dateparser_year_far_from_document_is_rejected():
+    # never accept a dateparser date a century away from the document
+    r = resolve("5-18-2118", REF)
+    assert r.start is None and r.method == "unresolved"
