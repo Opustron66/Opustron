@@ -50,6 +50,7 @@ set -a; source .env; set +a
 | `TAVILY_API_KEY` | Web enrichment |
 | `CHRONICLE_REDACT_RECALL` | Hermes plugin: `0` stops masking emails/phones/IDs in recalled memory |
 | `CHRONICLE_REDACT_NAMES` | Benchmark runs only: `off` stops pseudonymising names, organisations and places (emails/phones/IDs stay masked); `person` masks people only, leaving organisations and places. Unset = on |
+| `CHRONICLE_SECOND_LOOK` | `off` disables the wider retry for answers that say the corpus is silent. Unset = on |
 
 ## Calling a model: always use `chronicle.guard.llm`
 
@@ -322,6 +323,11 @@ no hedge after an answer it has given, leaves out superseded values unless asked
 the history, counts every distinct instance for "how many" questions, and words a gap
 as "The corpus does not record ...". As-of yes/no questions answer "Yes." or "No."
 first. Retrieval packs about 10k tokens of evidence (`CHAR_BUDGET` 40,000 characters).
+
+**Second look.** When an answer's first sentence says the corpus is silent, the question is
+retrieved again with about 25k tokens of evidence (`WIDE` in `retriever.py`) and answered once
+more. The retry replaces the first answer only if it answers and cites a document, so a correct
+"not recorded" stands when the wider search finds nothing. `CHRONICLE_SECOND_LOOK=off` disables it.
 
 **Live egress log.** In a second terminal, run:
 

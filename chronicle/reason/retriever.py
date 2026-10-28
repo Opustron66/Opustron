@@ -179,17 +179,22 @@ def retrieve_later(plan: QueryPlan, chunks: list[Chunk]) -> list[Evidence]:
 
 
 def retrieve_memory(plan: QueryPlan, memory: MemoryAPI, top_k: int = CLAIM_K,
-                    state: Path | None = None) -> list[Evidence]:
+                    state: Path | None = None, *, budget: int = CHAR_BUDGET,
+                    chunk_k: int = CHUNK_K, topic_k: int = TOPIC_K) -> list[Evidence]:
     if state is None and memory.database.path != ":memory:":
         state = Path(memory.database.path).parent
     chunks = load_chunks(state)
     channels = [
-        retrieve_pages(plan, memory, "topic", TOPIC_K),
+        retrieve_pages(plan, memory, "topic", topic_k),
         retrieve_pages(plan, memory, "entity", ENTITY_K),
         retrieve_claims(plan, memory, top_k),
-        retrieve_chunks(plan, chunks),
+        retrieve_chunks(plan, chunks, chunk_k),
     ]
-    return fuse(channels) + fuse([retrieve_later(plan, chunks)], budget=LATER_BUDGET)
+    return fuse(channels, budget=budget) + fuse([retrieve_later(plan, chunks)], budget=LATER_BUDGET)
+
+
+# The second look: when the first answer found nothing, about 25k tokens of evidence instead of 10k.
+WIDE = {"top_k": 60, "budget": 100_000, "chunk_k": 40, "topic_k": 12}
 
 
 SEARCH_BUDGET = 10_000

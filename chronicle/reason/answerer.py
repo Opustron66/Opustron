@@ -143,7 +143,8 @@ def answer_template(plan: QueryPlan) -> str:
     return ""
 
 
-def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last: bool, note: str = "") -> list[dict]:
+def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last: bool, note: str = "",
+              hint: str = "") -> list[dict]:
     context = "\n\n".join(_render(e) for e in evidence)
     reference = f"Answer as of {plan.reference_date.isoformat()}.\n\n" if plan.reference_date else ""
     if plan.reference_date and any(e.kind == "later" for e in evidence):
@@ -159,6 +160,8 @@ def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last:
     if template := answer_template(plan):
         system += f"\n\n{template}"
     user = f"{reference}EVIDENCE:\n{context}\n\nQUESTION: {plan.question}"
+    if hint:
+        user += f"\n\n{hint}"
     if agentic:
         system += f"\n\n{AGENT_RULES}"
         user += f"\n\n{note}{LAST_TURN if last else ''}".rstrip()
@@ -191,17 +194,19 @@ def _str_list(value, limit: int = 3) -> list[str]:
     return [v.strip() for v in value if isinstance(v, str) and v.strip()][:limit]
 
 
-def generate_answer(plan: QueryPlan, evidence: list[Evidence], tools: Tools | None = None) -> AnswerResult:
+def generate_answer(plan: QueryPlan, evidence: list[Evidence], tools: Tools | None = None,
+                    hint: str = "") -> AnswerResult:
     if not evidence:
         return AnswerResult("Not in the corpus", [])
     evidence = list(evidence)
     if tools is None:
-        parsed = _complete(_messages(plan, evidence, agentic=False, last=True), ANSWER_SCHEMA)
+        parsed = _complete(_messages(plan, evidence, agentic=False, last=True, hint=hint), ANSWER_SCHEMA)
     else:
         note = ""
         for round_number in range(1, MAX_ROUNDS + 1):
             last = round_number == MAX_ROUNDS
-            parsed = _complete(_messages(plan, evidence, agentic=True, last=last, note=note), AGENT_SCHEMA)
+            parsed = _complete(_messages(plan, evidence, agentic=True, last=last, note=note, hint=hint),
+                               AGENT_SCHEMA)
             if not isinstance(parsed, dict):
                 raise ValueError("LLM returned no JSON object")
             action = parsed.get("action")
