@@ -14,7 +14,7 @@ from itertools import pairwise
 from chronicle.guard import llm
 
 from .dates import annotate_dates
-from .grounding import unsupported
+from .grounding import unsupported, verified_support
 from .models import AnswerResult, Evidence, QueryPlan
 
 SUPPORT = {"type": "array", "items": {
@@ -441,4 +441,5 @@ def generate_answer(plan: QueryPlan, evidence: list[Evidence], tools: Tools | No
         answer = "Not in the corpus"
     texts = [t for e in evidence for t in (e.text, _render(e))]
     return AnswerResult(answer=answer, source_ids=ids,
-                        unsupported=unsupported(answer, parsed.get("support"), plan.question, texts))
+                        unsupported=unsupported(answer, parsed.get("support"), plan.question, texts),
+                        support=verified_support(parsed.get("support"), texts))

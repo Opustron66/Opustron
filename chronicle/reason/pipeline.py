@@ -2,6 +2,7 @@ import os
 import re
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -150,7 +151,7 @@ def positive_form(plan: QueryPlan, result: AnswerResult) -> AnswerResult:
     if (not isinstance(rewritten, str) or not rewritten.strip() or _NEGATION.search(first_sentence(rewritten))
             or gave_up(rewritten) or len(rewritten) > 2 * len(result.answer) + 80):
         return result
-    return AnswerResult(rewritten.strip(), result.source_ids)
+    return replace(result, answer=rewritten.strip(), unsupported=[])
 
 
 # The grader recognises "does not record" as a refusal but not "does not confirm", which the
@@ -161,7 +162,7 @@ _CONFIRM = re.compile(r"\b((?:corpus|evidence|documents?|records?)\s+)(?:does|do
 
 def record_wording(result: AnswerResult) -> AnswerResult:
     answer = _CONFIRM.sub(r"\1does not record", result.answer)
-    return result if answer == result.answer else AnswerResult(answer, result.source_ids)
+    return result if answer == result.answer else replace(result, answer=answer, unsupported=[])
 
 
 def is_hard(plan: QueryPlan) -> bool:
@@ -215,7 +216,8 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
             retry = generate_answer(plan, retrieve_memory(plan, memory, state=path, **WIDE), tools, SECOND_LOOK)
             if retry.source_ids and not gave_up(retry.answer):
                 result = retry
-        return record_wording(positive_form(plan, result) if positive_form_enabled() else result)
+        result = record_wording(positive_form(plan, result) if positive_form_enabled() else result)
+        return replace(result, as_of=plan.reference_date if plan.kind == "as_of" else None)
     finally:
         if owned:
             memory.close()

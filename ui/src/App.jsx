@@ -3,6 +3,7 @@ import Timeline from "./components/Timeline";
 import EntityCard from "./components/EntityCard";
 import ChatPanel from "./components/ChatPanel";
 import EgressLog from "./components/EgressLog";
+import DateDiff from "./components/DateDiff";
 import { MOCK, getEntities, getFacts, getSpan } from "./services/api";
 import "./styles.css";
 
@@ -82,6 +83,7 @@ export default function App() {
               onChange={setAsOf}
               facts={facts}
             />
+            <DateDiff startDate={memory.start} endDate={memory.end} asOf={asOf} facts={facts} />
           </div>
 
           <div className="app-body">
@@ -98,7 +100,7 @@ export default function App() {
             </aside>
 
             <main className="app-main">
-              <ChatPanel asOf={asOf} />
+              <ChatPanel asOf={asOf} facts={facts} />
             </main>
           </div>
         </>

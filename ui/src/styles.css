@@ -466,3 +466,75 @@ body {
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── "Why?" panel, refusal card, fact changes ────────────────────────────── */
+.chat-why { margin-top: 6px; font-size: 12px; color: var(--text-dim); }
+.chat-why summary { cursor: pointer; color: var(--accent); width: fit-content; }
+.chat-why summary:hover { text-decoration: underline; }
+.chat-why[open] {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.chat-why[open] summary { margin-bottom: 6px; }
+.why-asof { margin-bottom: 6px; }
+.why-quotes { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.why-quotes li { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.why-replaced { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.why-label, .chat-refusal-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.chat-refusal .chat-content {
+  background: transparent;
+  border: 1px dashed var(--text-muted);
+  color: var(--text-dim);
+}
+.chat-refusal-label { display: block; margin-bottom: 4px; }
+
+.fact-change { color: var(--text); }
+.fact-change-slot { color: var(--text-dim); }
+.fact-change-before { color: var(--text-dim); text-decoration: line-through; }
+.fact-change-after { color: var(--green); }
+.fact-change-date { color: var(--text-muted); }
+
+/* ── Two-date diff ────────────────────────────────────────────────────────── */
+.date-diff { margin-top: 10px; font-size: 12px; }
+.date-diff summary { cursor: pointer; color: var(--accent); width: fit-content; font-size: 12px; }
+.diff-dates { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0; color: var(--text-dim); }
+.diff-dates input {
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font: inherit;
+  color-scheme: dark;
+}
+.diff-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.diff-title { font-size: 12px; font-weight: 600; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
+.diff-changed .diff-title { color: var(--amber); }
+.diff-added .diff-title { color: var(--green); }
+.diff-ended .diff-title { color: var(--red); }
+.diff-group ul { list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.diff-ended li { color: var(--text-dim); text-decoration: line-through; }
+.diff-more {
+  margin-top: 4px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+.diff-empty { color: var(--text-muted); }

@@ -144,3 +144,50 @@ export function factsAsOf(facts, when) {
 export function factsAbout(facts, name) {
   return facts.filter((f) => f.subject === name || f.object === name);
 }
+
+// Two facts fill the same slot when they share the predicate and exactly one side:
+// "Alice owns payments" -> "Bob owns payments", or "deadline: 1 May" -> "deadline: 8 May".
+export function sameSlot(a, b) {
+  return a.predicate === b.predicate && (a.subject === b.subject) !== (a.object === b.object);
+}
+
+const day = (iso) => (iso ? iso.slice(0, 10) : null);
+
+// For the facts a cited document states, the fact each one replaced (the latest that ended by
+// the time it started), as { before, after }.
+export function replacedFacts(facts, docIds) {
+  const cited = new Set(docIds);
+  const seen = new Set();
+  const out = [];
+  facts
+    .filter((f) => cited.has(f.doc_id) && f.valid_from)
+    .forEach((after) => {
+      const before = facts
+        .filter((p) => p !== after && sameSlot(p, after) && p.valid_to && day(p.valid_to) <= day(after.valid_from))
+        .sort((a, b) => (day(a.valid_to) < day(b.valid_to) ? 1 : -1))[0];
+      if (before && !seen.has(before.fact_id)) {
+        seen.add(before.fact_id);
+        out.push({ before, after });
+      }
+    });
+  return out;
+}
+
+// What changed in memory between two dates: facts that became true, stopped being true, and
+// pairs where one replaced the other in the same slot.
+export function diffFacts(facts, from, to) {
+  const was = factsAsOf(facts, from);
+  const now = factsAsOf(facts, to);
+  let added = now.filter((f) => !was.includes(f));
+  let ended = was.filter((f) => !now.includes(f));
+  const changed = [];
+  ended.forEach((before) => {
+    const after = added.find((a) => sameSlot(before, a));
+    if (after) {
+      changed.push({ before, after });
+      added = added.filter((a) => a !== after);
+    }
+  });
+  ended = ended.filter((f) => !changed.some((c) => c.before === f));
+  return { added, ended, changed };
+}
