@@ -166,6 +166,7 @@ ANSWER_FORM = """How to write the answer:
   plans or old proposals unless the question asks for the history.
 - When the question asks how many, or for each/all items, count every distinct one in the
   evidence (same name but different date, purpose or owner = distinct) and list them all.
+  Write the count with what it counts ("Two reports."), not a bare digit.
 - When the question asks for both numbers, or what something did to a value, give the value
   before and after ("from 40% to 65%").
 - When the question names a specific context (a fixture, environment, test, tier or date), use
@@ -186,7 +187,9 @@ ANSWER_FORM = """How to write the answer:
 # the default from 30d to 14d" written after the date is the only statement of the old value.
 AS_OF_LATER = ("never report the new values they introduce as the answer. They can still show what held "
                'before: a change written later ("raised the limit from 5 to 8") means the old value (5) '
-               "held on the as-of date, so report the old value. Otherwise use them only to say that "
+               "held on the as-of date, so report the old value. A later reply that reviews a document "
+               'written by the as-of date ("the 30% target in your draft is a stretch") shows what that '
+               "document said, so report that too. Otherwise use them only to say that "
                "something had not happened yet, or was not yet decided, by the as-of date (and when it "
                "happened).")
 

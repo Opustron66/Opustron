@@ -380,7 +380,9 @@ had been agreed. `CHRONICLE_KEY_LINES=off` turns it off.
 
 **Two answer rules from run-5 misses.** When a later message in the same thread moves a deadline
 ("send it Mon morning" after "by Mon EOD"), the latest one is the answer. "Who proposed X" is the
-first person who suggested it, even as a question, not whoever approved it.
+first person who suggested it, even as a question, not whoever approved it. Counts are written
+with their noun ("Two reports."). For as-of questions, a later reply that reviews a draft written by
+the as-of date ("the 30% target is a stretch") counts as evidence of what the draft said.
 
 **Timeline first for state over time (off by default, `CHRONICLE_TIMELINE=1`).** As-of questions, history questions and ones like "how did
 X change" or "have mitigations been put in place?" use a schema whose first field is `timeline`:
