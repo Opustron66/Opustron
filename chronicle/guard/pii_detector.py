@@ -1,6 +1,6 @@
 """PII detection: regex patterns + Presidio NER.
 
-Tier 1 (always available): regex for emails, phones, SSNs, cards, IPs, URLs.
+Tier 1 (always available): regex for emails, phones, SSNs, cards, IPs. URLs are not masked.
 Tier 2 (Presidio + spaCy en_core_web_sm, installed by default): names,
 organisations and places. If it can't load, a warning is logged once and only
 Tier 1 runs; ``ner_available()`` reports which.
@@ -35,8 +35,10 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
     "IP_ADDRESS": re.compile(
         r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
     ),
-    "URL": re.compile(r"https?://[\w\-._~:/?#\[\]@!$&'()*+,;=%]+"),
 }
+# URLs are deliberately not masked: in work corpora they are merge-request and repo links
+# whose numbers and paths answer questions ("is !342 real?", "what is the GitLab path?"),
+# and masking them as URL_1 hid that. Emails inside a URL are still masked by EMAIL_ADDRESS.
 
 
 @dataclass(slots=True)
@@ -101,7 +103,6 @@ _PRESIDIO_ENTITY_TYPES = {
     "LOCATION",
     "NRP",
     "MEDICAL_LICENSE",
-    "URL",
     "US_DRIVER_LICENSE",
     "US_PASSPORT",
     "US_ITIN",

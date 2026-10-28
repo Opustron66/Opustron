@@ -138,7 +138,7 @@ def _key(e: Evidence) -> str:
     return f"{e.kind}|{e.doc_id}|{e.text[:80]}"
 
 
-SECTION_ORDER = {"topic": 0, "entity": 1, "claim": 2, "chunk": 3}
+SECTION_ORDER = {"topic": 0, "entity": 1, "claim": 2, "chunk": 3, "later": 4}
 
 
 def fuse(channels: list[list[Evidence]], budget: int = CHAR_BUDGET) -> list[Evidence]:
@@ -160,17 +160,35 @@ def fuse(channels: list[list[Evidence]], budget: int = CHAR_BUDGET) -> list[Evid
     return sorted(chosen, key=lambda e: (SECTION_ORDER.get(e.kind, 9), -e.score))
 
 
+LATER_K = 4
+LATER_BUDGET = 4_000
+
+
+def retrieve_later(plan: QueryPlan, chunks: list[Chunk]) -> list[Evidence]:
+    """For an as-of question, a few documents written after the as-of date, in their own section.
+
+    Everything else is cut at the date, so "had Beacon reached 50% by 2026-05-10?" saw nothing
+    about the milestone and answered "not recorded" instead of "no, it reached 50% on 05-14"."""
+    ref = _as_of(plan)
+    if ref is None:
+        return []
+    ranked = rank_chunks(chunks, search_query(plan), k=LATER_K * 5)
+    later = [(c, s) for c, s in ranked if (c.date or "")[:10] > ref.isoformat()][:LATER_K]
+    return [Evidence(c.doc_id, c.text, c.date or "", s, kind="later") for c, s in later]
+
+
 def retrieve_memory(plan: QueryPlan, memory: MemoryAPI, top_k: int = CLAIM_K,
                     state: Path | None = None) -> list[Evidence]:
     if state is None and memory.database.path != ":memory:":
         state = Path(memory.database.path).parent
+    chunks = load_chunks(state)
     channels = [
         retrieve_pages(plan, memory, "topic", TOPIC_K),
         retrieve_pages(plan, memory, "entity", ENTITY_K),
         retrieve_claims(plan, memory, top_k),
-        retrieve_chunks(plan, load_chunks(state)),
+        retrieve_chunks(plan, chunks),
     ]
-    return fuse(channels)
+    return fuse(channels) + fuse([retrieve_later(plan, chunks)], budget=LATER_BUDGET)
 
 
 SEARCH_BUDGET = 10_000

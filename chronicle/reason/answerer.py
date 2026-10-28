@@ -62,6 +62,8 @@ def _render(e: Evidence) -> str:
         return f"PERSON PAGE\n{e.text}"
     if e.kind == "chunk":
         return f"DOCUMENT [{e.doc_id}] written {e.date}\n{e.text}"
+    if e.kind == "later":
+        return f"WRITTEN AFTER THE AS-OF DATE [{e.doc_id}] written {e.date}\n{e.text}"
     return e.text
 
 
@@ -125,6 +127,11 @@ def answer_template(plan: QueryPlan) -> str:
 def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last: bool, note: str = "") -> list[dict]:
     context = "\n\n".join(_render(e) for e in evidence)
     reference = f"Answer as of {plan.reference_date.isoformat()}.\n\n" if plan.reference_date else ""
+    if plan.reference_date and any(e.kind == "later" for e in evidence):
+        reference = (f"Answer as of {plan.reference_date.isoformat()}. Documents marked WRITTEN AFTER THE "
+                     "AS-OF DATE are not true as of that date: never report their values as the answer. "
+                     "Use them only to say that something had not happened yet, or was not yet decided, "
+                     "by the as-of date (and when it happened).\n\n")
     system = f"{_contract()}\n\n{EVIDENCE_GUIDE}\n\n{EVIDENCE_RULES}"
     if template := answer_template(plan):
         system += f"\n\n{template}"

@@ -66,3 +66,36 @@ def test_numeric_entity_names_are_not_stripped_as_years():
 
 def test_date_only_query_has_no_lexical_evidence():
     assert lexical_query("2026-06-09") == ""
+
+
+def test_as_of_questions_also_get_later_documents_in_their_own_section():
+    from datetime import date
+
+    from chronicle.memory.search import Chunk
+    from chronicle.reason.answerer import _messages
+    from chronicle.reason.models import QueryPlan
+    from chronicle.reason.retriever import retrieve_later
+
+    chunks = [
+        Chunk("e1", "2026-05-08", "Beacon rollout at 25% cohort, 50% planned next week."),
+        Chunk("e2", "2026-05-14T09:00:00Z", "Beacon reached its 50% rollout cohort today."),
+        Chunk("e3", "2026-05-20", "Unrelated note about lunch."),
+    ]
+    plan = QueryPlan(question="Had Beacon reached its 50% rollout cohort?", kind="as_of",
+                     reference_date=date(2026, 5, 10))
+    later = retrieve_later(plan, chunks)
+    assert [e.doc_id for e in later] == ["e2"]
+    assert later[0].kind == "later"
+
+    user = _messages(plan, later, agentic=False, last=False)[1]["content"]
+    assert "WRITTEN AFTER THE AS-OF DATE [e2]" in user
+    assert "not true as of that date" in user
+
+
+def test_non_as_of_questions_get_no_later_section():
+    from chronicle.memory.search import Chunk
+    from chronicle.reason.models import QueryPlan
+    from chronicle.reason.retriever import retrieve_later
+
+    plan = QueryPlan(question="Has Beacon reached 50%?", kind="current")
+    assert retrieve_later(plan, [Chunk("e2", "2026-05-14", "Beacon reached 50%.")]) == []
