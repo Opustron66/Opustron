@@ -57,9 +57,10 @@ ANSWER_FORM = """How to write the answer:
   evidence (same name but different date, purpose or owner = distinct) and list them all.
 - When the question asks for both numbers, or what something did to a value, give the value
   before and after ("from 40% to 65%").
-- Answer from clear indirect evidence too: if documents tie a person to a role or project
-  ("Priya's team" builds Orion; Priya added Orion's registry), name that person. "The corpus does
-  not record" is for what the evidence does not address, not for answers it implies.
+- For who holds a role, answer from clear indirect evidence too: if documents tie a person to a
+  role or project ("Priya's team" builds Orion; Priya added Orion's registry), name that person.
+  This is only for people and roles, never for what happened at an event: an agenda or plan is not
+  a record of what was discussed or decided.
 - When the corpus does not record what was asked, say "The corpus does not record <it>." and
   describe no outcome."""
 
@@ -135,7 +136,8 @@ class Tools:
 
 _CHAIN = re.compile(r"\bin between\b|more than once", re.IGNORECASE)
 _ORDER = re.compile(r"\bin the order\b|earliest first|\border they happened\b", re.IGNORECASE)
-_OUTCOME = re.compile(r"^\s*(how did|how was|what was the outcome|did)\b", re.IGNORECASE)
+_OUTCOME = re.compile(r"^\s*(how did|how was|what was the outcome|did)\b|\bwhat was (discussed|decided|announced)\b"
+                      r"|\bwhat (were the findings|did .{1,60} conclude)\b", re.IGNORECASE)
 _TWO = re.compile(r"\b(two different|are different|is that right)\b", re.IGNORECASE)
 
 

@@ -78,6 +78,7 @@ def test_answer_form_rules_are_in_every_prompt():
     assert "count every distinct one" in system
     assert 'The corpus does not record <it>.' in system
     assert "before and after" in system and "clear indirect evidence" in system
+    assert "only for people and roles" in system
 
 
 def test_as_of_questions_ask_for_yes_or_no_first():
@@ -96,6 +97,9 @@ def test_as_of_questions_ask_for_yes_or_no_first():
 def test_how_was_questions_get_the_outcome_template():
     from chronicle.reason.answerer import answer_template
     assert "does not record" in answer_template(QueryPlan("How was the 30ms token-transit window resolved?"))
+    for q in ("What was discussed at the design sync on 2026-06-02?", "What did the launch review conclude?",
+              "What were the findings of the code review held on 2026-06-01?"):
+        assert "does not record" in answer_template(QueryPlan(q)), q
 
 
 def test_as_of_later_documents_may_supply_the_old_value_of_a_change():
