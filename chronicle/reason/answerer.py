@@ -62,9 +62,14 @@ ANSWER_FORM = """How to write the answer:
 - When the question names a specific context (a fixture, environment, test, tier or date), use
   only figures stated for that exact context, not similar figures from other tests or later runs.
 - For who holds a role, answer from clear indirect evidence too: if documents tie a person to a
-  role or project ("Priya's team" builds Orion; Priya added Orion's registry), name that person.
+  role or project ("Priya's team" builds Orion; Priya added Orion's registry), name the
+  best-supported person with their full name rather than saying the corpus does not record it.
   This is only for people and roles, never for what happened at an event: an agenda or plan is not
   a record of what was discussed or decided.
+- A decision or commitment someone makes about their own work or calendar ("I'll take over the
+  slot", "we're moving the sync to biweekly"), especially once the others agree, counts as a step
+  taken: list it as in place. This does not apply to scheduled events (reviews, launches,
+  cutovers, meetings): those still need evidence that they happened.
 - When the corpus does not record what was asked, say "The corpus does not record <it>." and
   describe no outcome."""
 

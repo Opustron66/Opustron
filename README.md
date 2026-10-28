@@ -327,7 +327,9 @@ the history, counts every distinct instance for "how many" questions, and words 
 as "The corpus does not record ...". As-of yes/no questions answer "Yes." or "No."
 first. "Both numbers" questions give the value before and after. A person's role
 may be answered from clear indirect evidence ("Priya's team builds Orion"), but an agenda is never
-treated as a record of what a meeting discussed. For as-of questions, a change written after the
+treated as a record of what a meeting discussed. A commitment someone makes about their own work
+("I'll take over the slot") counts as a step taken; scheduled events still need evidence they
+happened. For as-of questions, a change written after the
 date ("from 30d to 14d") may supply the old value. Retrieval packs about 10k tokens of evidence (`CHAR_BUDGET` 40,000 characters).
 
 **Second look.** When an answer's first sentence says the corpus is silent, the question is

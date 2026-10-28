@@ -80,6 +80,8 @@ def test_answer_form_rules_are_in_every_prompt():
     assert "before and after" in system and "clear indirect evidence" in system
     assert "only for people and roles" in system
     assert "names a specific context" in system
+    assert "counts as a step" in system and "still need evidence that they happened" in system
+    assert "best-supported person with their full name" in system
 
 
 def test_as_of_questions_ask_for_yes_or_no_first():
