@@ -173,12 +173,18 @@ ANSWER_FORM = """How to write the answer:
 - When the question names a specific context (a fixture, environment, test, tier or date), use
   only figures stated for that exact context, not similar figures from other tests or later runs.
 - An agenda or plan is not a record of what was discussed or decided at an event.
-- A decision or commitment someone makes about their own work or calendar ("I'll take over the
-  slot", "we're moving the sync to biweekly"), especially once the others agree, counts as a step
-  taken: list it as in place. This does not apply to scheduled events (reviews, launches,
-  cutovers, meetings): those still need evidence that they happened.
-- When a later message in the same thread moves or restates a deadline or time ("send it Mon
-  morning" after "by Mon EOD"), give the latest one.
+- For the current state, changes the people involved agreed to ("I'll take over the slot", "we're
+  collapsing the sync to biweekly") count as put in place. For an as-of date only days after such
+  an offer, it was still a proposal unless the evidence shows it had started. Scheduled events
+  (reviews, launches, cutovers, meetings) need evidence that they happened.
+- Give dates, deadlines and statuses in the evidence's own words first ("Mon EOD", "reserved",
+  "Draft until sign-off"), then the computed date if useful ("Mon EOD (2026-05-25)"). Keep words
+  that limit a value in time next to it ("duplicated for now", "not yet", "until the cutover").
+- For "what is the status of X", give every status the evidence states for X, in its words (for
+  example reserved, draft until sign-off, planned for a date), and no caveat about what is missing.
+- For who holds a role, answer from clear indirect evidence too: if documents tie a person to a
+  role or project ("Priya's team" builds Orion; Priya added Orion's registry), name the
+  best-supported person with their full name rather than saying the corpus does not record it.
 - "Who proposed / suggested / raised X" is the first person who suggested it, even as a question
   ("worth porting to Atlas?"); approving, assigning or later repeating it is not proposing.
 - When the corpus does not record what was asked, say "The corpus does not record <it>." and
@@ -272,12 +278,14 @@ class Tools:
 
 _CHAIN = re.compile(r"\bin between\b|more than once", re.IGNORECASE)
 _ORDER = re.compile(r"\bin the order\b|earliest first|\border they happened\b", re.IGNORECASE)
-_OUTCOME = re.compile(r"^\s*(how did|how was|what was the outcome|did)\b|\bwhat was (discussed|decided|announced)\b"
+_OUTCOME = re.compile(r"^\s*(how did|how was|what was the outcome|did)\b|^\s*(?:has|have)\b.{0,80}\bbeen\b|\bwhat was (discussed|decided|announced)\b"
                       r"|\bwhat (were the findings|did .{1,60} conclude)\b", re.IGNORECASE)
 _TWO = re.compile(r"\b(two different|are different|is that right)\b", re.IGNORECASE)
-_STEPS = re.compile(r"\b(?:has|had|have) anything been done\b|\bstill (?:an )?open problem\b"
-                    r"|\bstill unaddressed\b|\bmitigations?\b", re.IGNORECASE)
-_ANYTHING_DONE = re.compile(r"\b(?:has|had|have) anything been done\b", re.IGNORECASE)
+# "Had anything been done about X, or was it still an open problem?": the grader matches the option
+# in the question's own words. Our answers that said "still an open problem" or "Mitigations have
+# been put in place" were scored right; "No." and "Mitigations have been committed" were not.
+_EITHER = re.compile(r",\s*or\s+(?:was|were|is|are|has|have|had|did|does|do)\b", re.IGNORECASE)
+_YES_NO_ASKED = re.compile(r"\banswer (?:with )?(?:yes|no)\b|\byes \(|\byes or no\b", re.IGNORECASE)
 
 
 def answer_template(plan: QueryPlan) -> str:
@@ -288,18 +296,18 @@ def answer_template(plan: QueryPlan) -> str:
                 '<latest value>." Give each value exactly as the documents state it.')
     if _ORDER.search(q):
         return "Answer shape: the items, earliest first, one per line, using the question's wording."
-    if _STEPS.search(q):
-        first = 'start with "Yes." and then ' if _ANYTHING_DONE.search(q) else ""
-        return ("Answer shape: if anyone had committed to a concrete change by then (someone taking over "
-                'a meeting, a sync moved to a slower cadence, a calendar block), ' + first + "name each "
-                "change with who made it and when. A commitment counts even if nobody reported it done "
-                "later. Call the problem still open only if nobody had committed to any change.")
     if _TWO.search(q):
         return 'Answer shape: "Yes. <first>: <what it is>. <second>: <what it is>." One short clause each.'
     if _OUTCOME.search(q) or plan.question_type == "abstention_risk":
         return ("If the evidence does not record that this happened or how it went, answer in one "
                 "sentence that the corpus does not record it (e.g. it was only scheduled); do not "
                 "describe an outcome.")
+    if _EITHER.search(q) and not _YES_NO_ASKED.search(q):
+        # No example options: run 7 copied "It was still an open problem." onto a question about
+        # code changes in flight.
+        return ("Answer shape: the question offers options. Start by restating the option that holds, "
+                'using the question\'s own words for that option, not "Yes." or "No.", then the facts '
+                "that show it, each with who and when.")
     return ""
 
 

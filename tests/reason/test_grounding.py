@@ -143,16 +143,15 @@ def test_corpus_does_not_confirm_is_worded_as_a_refusal_the_grader_knows():
     assert pipeline.record_wording(kept) is kept
 
 
-@pytest.mark.parametrize("question,shape,yes", [
-    ("As of 2026-05-15, had anything been done about Jordan Kim's meeting load, or was it still an open problem?", True, True),
-    ("Is Jordan Kim's meeting load still unaddressed, or have mitigations been put in place? Name them.", True, False),
-    ("Is merge request !342 still open?", False, False),
+@pytest.mark.parametrize("question,either", [
+    ("As of 2026-05-15, had anything been done about Jordan Kim's meeting load, or was it still an open problem?", True),
+    ("Is Jordan Kim's meeting load still unaddressed, or have mitigations been put in place? Name them.", True),
+    ("Are Compass v1 and Compass v2 the same system, or two endpoints? Answer yes (same) or no (distinct).", False),
+    ("Is merge request !342 still open?", False),
 ])
-def test_steps_taken_questions_get_their_answer_shape(question, shape, yes):
+def test_either_or_questions_are_answered_with_the_option_in_the_questions_words(question, either):
     from chronicle.reason.answerer import answer_template
-    template = answer_template(QueryPlan(question))
-    assert ("committed to a concrete change" in template) is shape
-    assert ('"Yes."' in template) is yes
+    assert ("question offers options" in answer_template(QueryPlan(question))) is either
 
 
 def test_a_reply_truncated_twice_is_asked_once_more_with_thinking_off():
@@ -161,3 +160,21 @@ def test_a_reply_truncated_twice_is_asked_once_more_with_thinking_off():
     with patch("chronicle.reason.answerer.llm.complete", side_effect=replies) as complete:
         assert generate_answer(QueryPlan("Who proposed it?"), [Evidence("S:1", "Rohan Dasgupta")]).answer == "Rohan Dasgupta."
     assert complete.call_count == 3 and complete.call_args.kwargs["thinking"] is False
+
+
+@pytest.mark.parametrize("answer,missing", [
+    ("94%.", True),
+    ("99.1% as of the 24h all-on smoke test on 2026-05-26.", True),
+    ("It went from 1,200 to 900 requests on 2026-05-20.", False),
+    ("From 71% to 94%.", False),
+    ("The corpus does not record it.", False),
+])
+def test_both_numbers_questions_need_two_figures_beyond_the_question(answer, missing):
+    plan = QueryPlan("What did MR !521 do to the cache hit rate on the smoke fixture? Give both numbers.")
+    assert pipeline.missing_a_number(plan, answer) is missing
+    assert not pipeline.missing_a_number(QueryPlan("What was the hit rate?"), "94%.")
+
+
+def test_has_it_been_questions_get_the_refusal_shape():
+    from chronicle.reason.answerer import answer_template
+    assert "does not record it" in answer_template(QueryPlan("Has merge request !342 been opened and reviewed?"))

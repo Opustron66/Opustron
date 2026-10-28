@@ -1,6 +1,6 @@
 """Write the calendar date next to relative days in document text, so the model does not have to.
 
-"What I need by Mon EOD", written on Wednesday 2026-05-20, becomes "by Mon [2026-05-25] EOD".
+"What I need by Mon EOD", written on Wednesday 2026-05-20, becomes "by Mon EOD [2026-05-25]".
 Models get this arithmetic wrong (the same question was answered 23, 24 and 25 May in three runs).
 Only the text shown to the model is annotated; stored memory is unchanged.
 
@@ -8,6 +8,10 @@ Only the text shown to the model is annotated; stored memory is unchanged.
 * "this/coming Wed" and "by/until/before Wed" are the next Wednesday on or after the written date;
 * "last Wed" is the one before it;
 * a bare weekday could be either, depending on tense, so it gets both dates.
+
+The date goes after a time of day that follows the weekday ("Mon EOD", "Fri 5pm", "Mon morning"),
+so the phrase stays whole: answers quoting it as "Mon EOD" were scored right, and ones that
+copied "Mon [2026-05-25] EOD" as "Monday, May 25, 2026 EOD" were not.
 """
 import re
 from datetime import date, timedelta
@@ -20,8 +24,10 @@ _WEEKDAY = (r"(?:[Mm]on(?:day)?|[Tt]ue(?:s(?:day)?)?|[Ww]ed(?:s|nesday)?|[Tt]hu(
 # Not when a date already follows ("Wed 5/27", "Thursday, May 28", "Wed, 20 May"); a time
 # ("Thursday 14:00") is not a date.
 _NO_DATE_AFTER = rf"(?![,\s]*(?:\d{{1,2}}/\d|\d{{4}}-|\d{{1,2}}(?:st|nd|rd|th)?\b(?!:)|the\s+\d|{_MONTH}))"
+_PART_OF_DAY = (r"(?P<part>\s+(?:EOD|EOW|COB|AM|PM|morning|afternoon|evening|night|noon|lunch(?:time)?"
+                r"|\d{1,2}(?::\d{2})?\s?(?:am|pm))\b)?")
 _RELATIVE = re.compile(
-    rf"\b(?:(?P<mod>next|this|coming|last|by|until|before)\s+)?(?P<day>{_WEEKDAY})\b{_NO_DATE_AFTER}",
+    rf"\b(?:(?P<mod>next|this|coming|last|by|until|before)\s+)?(?P<day>{_WEEKDAY})\b{_NO_DATE_AFTER}{_PART_OF_DAY}",
     re.IGNORECASE)
 _RELATIVE_CASE = re.compile(rf"(?:(?i:next|this|coming|last|by|until|before)\s+)?{_WEEKDAY}")
 _DEICTIC = re.compile(r"\b(today|tonight|tomorrow|yesterday)\b(?!\s*\[)", re.IGNORECASE)
@@ -50,10 +56,11 @@ def annotate_dates(text: str, written: str) -> str:
 
     def weekday(m: re.Match) -> str:
         # The case-sensitive pattern keeps lowercase "sat"/"sun" out; IGNORECASE is only for "Next".
-        if not _RELATIVE_CASE.fullmatch(m.group(0)):
-            return m.group(0)
+        whole, part = m.group(0), m.group("part") or ""
+        if not _RELATIVE_CASE.fullmatch(whole[:len(whole) - len(part)]):
+            return whole
         mod = (m.group("mod") or "").lower()
-        return f"{m.group(0)} [{_weekday_date(day, mod, _DAYS[m.group('day')[:3].lower()])}]"
+        return f"{whole} [{_weekday_date(day, mod, _DAYS[m.group('day')[:3].lower()])}]"
 
     text = _RELATIVE.sub(weekday, text)
     return _DEICTIC.sub(
