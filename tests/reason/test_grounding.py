@@ -143,16 +143,15 @@ def test_corpus_does_not_confirm_is_worded_as_a_refusal_the_grader_knows():
     assert pipeline.record_wording(kept) is kept
 
 
-@pytest.mark.parametrize("question,shape,yes", [
-    ("As of 2026-05-15, had anything been done about Jordan Kim's meeting load, or was it still an open problem?", True, True),
-    ("Is Jordan Kim's meeting load still unaddressed, or have mitigations been put in place? Name them.", True, False),
-    ("Is merge request !342 still open?", False, False),
+@pytest.mark.parametrize("question,either", [
+    ("As of 2026-05-15, had anything been done about Jordan Kim's meeting load, or was it still an open problem?", True),
+    ("Is Jordan Kim's meeting load still unaddressed, or have mitigations been put in place? Name them.", True),
+    ("Are Compass v1 and Compass v2 the same system, or two endpoints? Answer yes (same) or no (distinct).", False),
+    ("Is merge request !342 still open?", False),
 ])
-def test_steps_taken_questions_get_their_answer_shape(question, shape, yes):
+def test_either_or_questions_are_answered_with_the_option_in_the_questions_words(question, either):
     from chronicle.reason.answerer import answer_template
-    template = answer_template(QueryPlan(question))
-    assert ("committed to a concrete change" in template) is shape
-    assert ('"Yes."' in template) is yes
+    assert ("question offers options" in answer_template(QueryPlan(question))) is either
 
 
 def test_a_reply_truncated_twice_is_asked_once_more_with_thinking_off():

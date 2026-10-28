@@ -8,7 +8,9 @@ WED = "2026-05-20"  # a Wednesday
 
 
 @pytest.mark.parametrize("text,expected", [
-    ("What I need from you by Mon EOD:", "by Mon [2026-05-25] EOD"),
+    ("What I need from you by Mon EOD:", "by Mon EOD [2026-05-25]"),
+    ("Send it Mon morning, I will read", "Mon morning [2026-05-18 or 2026-05-25]"),
+    ("by Fri 5pm please", "by Fri 5pm [2026-05-22]"),
     ("Skip-level with Elena is next Wed.", "next Wed [2026-05-27]"),
     ("Next Friday then", "Next Friday [2026-05-29]"),
     ("this Thursday 14:00", "this Thursday [2026-05-21] 14:00"),
@@ -38,6 +40,6 @@ def test_unknown_written_date_leaves_text_alone():
 def test_documents_are_shown_with_weekday_and_annotated_dates():
     shown = _render(Evidence("E:1", "What I need by Mon EOD", WED, kind="chunk"))
     assert shown.startswith("DOCUMENT [E:1] written Wednesday 2026-05-20\n")
-    assert "by Mon [2026-05-25] EOD" in shown
+    assert "by Mon EOD [2026-05-25]" in shown
     later = _render(Evidence("E:2", "lands tomorrow", WED, kind="later"))
     assert "written Wednesday 2026-05-20" in later and "tomorrow [2026-05-21]" in later

@@ -80,7 +80,9 @@ def test_answer_form_rules_are_in_every_prompt():
     assert "before and after" in system
     assert "An agenda or plan is not a record" in system
     assert "names a specific context" in system
-    assert "counts as a step" in system and "still need evidence that they happened" in system
+    assert "counts as in place once it has started" in system and "need evidence that they happened" in system
+    assert "in the evidence's own words" in system and '"Mon EOD"' in system
+    assert "best-supported person" in system and "for now" in system
 
 
 def test_as_of_questions_ask_for_yes_or_no_first():
