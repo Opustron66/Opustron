@@ -11,6 +11,7 @@ from chronicle.memory import MemoryAPI
 
 from .abstention import should_abstain
 from .answerer import Tools, answer_template, generate_answer, generate_corpus_answer
+from .critic import critic_enabled, critique
 from .grounding import found_anywhere
 from .models import AnswerResult, QueryPlan
 from .planner import plan_query, understand
@@ -45,6 +46,32 @@ _GAVE_UP = re.compile(r"^[^.]*\b(?:does|do|did) not (?:record|contain|mention|st
 
 SECOND_LOOK = ("A first pass over less evidence found no answer. Answer only if this evidence states it "
                "explicitly, and cite that document. Otherwise reply that the corpus does not record it.")
+# For who holds a role, clear indirect evidence counts ("Rohan Dasgupta from Beacon", "Rohan's team"):
+# run 5 named Beacon's lead from it, and the explicit-only second look refused in later runs.
+SECOND_LOOK_ROLE = ("A first pass over less evidence found no answer. For who holds a role, clear indirect "
+                    'evidence counts: lines like "<name> from <project>", "<name>\'s team" or "<name> '
+                    '(<project>)". Name the best-supported person with their full name and cite those '
+                    "documents. Only if nothing ties a person to it, reply that the corpus does not record it.")
+_ROLE_Q = re.compile(r"\bwho (?:leads|owns|runs|heads|manages)\b|\bperson who (?:leads|owns|runs|heads)\b",
+                     re.IGNORECASE)
+# "Give both numbers": run 5 and a later check answered with one of the two.
+_BOTH = re.compile(r"\bboth (?:numbers|values|figures)\b", re.IGNORECASE)
+_PERCENT = re.compile(r"\d+(?:\.\d+)?\s?%")
+# Dates, times and "24h"-style durations are not the figures asked for: a check answered "99.1% as
+# of the 24h smoke test on 2026-05-26" and passed as two numbers.
+_NOT_A_FIGURE = re.compile(r"\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}|\b\d+[a-z]+\b|![0-9]+", re.IGNORECASE)
+_FIGURE = re.compile(r"\d+(?:\.\d+)?\s?%|\b\d+(?:\.\d+)?\b")
+BOTH_HINT = ('The question asks for both numbers. Give the value before and after, "from <before> to '
+             '<after>", using figures for the exact context the question names.')
+
+
+def missing_a_number(plan: QueryPlan, answer: str) -> bool:
+    if not _BOTH.search(plan.question) or gave_up(answer):
+        return False
+    asked = set(_FIGURE.findall(_NOT_A_FIGURE.sub(" ", plan.question)))
+    text = _NOT_A_FIGURE.sub(" ", answer)
+    figures = _PERCENT.findall(text) if _PERCENT.search(text) else _FIGURE.findall(text)
+    return len({f.replace(" ", "") for f in figures if f not in asked}) < 2
 
 
 def gave_up(answer: str) -> bool:
@@ -165,6 +192,22 @@ def record_wording(result: AnswerResult) -> AnswerResult:
     return result if answer == result.answer else replace(result, answer=answer, unsupported=[])
 
 
+# The grader reads a clause holding "not" as denying everything in it, so "Provider C has
+# experimental status and does not fully support it" denied "experimental" in run 6. A negated
+# verb joined on with "and"/"which"/"so" becomes its own clause.
+_JOINED_NEGATION = re.compile(
+    r",?\s+(?:and|which|that|so|while)\s+((?:does|do|did|is|are|was|were|has|have|had|can|could|will|would)"
+    r"\s+not\b|(?:doesn't|don't|didn't|isn't|aren't|wasn't|weren't|hasn't|haven't|cannot|can't|never|no longer)\b)",
+    re.IGNORECASE)
+
+
+def split_negations(result: AnswerResult) -> AnswerResult:
+    if gave_up(result.answer):
+        return result
+    answer = _JOINED_NEGATION.sub(r"; it \1", result.answer)
+    return result if answer == result.answer else AnswerResult(answer, result.source_ids)
+
+
 def is_hard(plan: QueryPlan) -> bool:
     return plan.kind == "as_of" or bool(_HARD.search(plan.question))
 
@@ -213,10 +256,20 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
         if gave_up(result.answer) and second_look_enabled():
             # Kept only when it answers and cites, so a correct "not recorded" survives a retry that
             # finds nothing.
-            retry = generate_answer(plan, retrieve_memory(plan, memory, state=path, **WIDE), tools, SECOND_LOOK)
+            wide = retrieve_memory(plan, memory, state=path, **WIDE)
+            retry = generate_answer(plan, wide, tools,
+                                    SECOND_LOOK_ROLE if _ROLE_Q.search(plan.question) else SECOND_LOOK)
             if retry.source_ids and not gave_up(retry.answer):
+                result, evidence = retry, wide
+        if missing_a_number(plan, result.answer):
+            retry = generate_answer(plan, evidence, tools, BOTH_HINT)
+            if not missing_a_number(plan, retry.answer):
                 result = retry
-        result = record_wording(positive_form(plan, result) if positive_form_enabled() else result)
+        if critic_enabled():
+            result = critique(plan, result, evidence, gave_up)
+        if positive_form_enabled():
+            result = positive_form(plan, result)
+        result = record_wording(split_negations(result))
         return replace(result, as_of=plan.reference_date if plan.kind == "as_of" else None)
     finally:
         if owned:

@@ -53,6 +53,7 @@ set -a; source .env; set +a
 | `CHRONICLE_SECOND_LOOK` | `off` disables the wider retry for answers that say the corpus is silent. Unset = on |
 | `CHRONICLE_VOTE` | `1` (set by the benchmark adapter) answers flip-prone questions (yes/no, "which one", "how many", as-of) up to three times and keeps the majority. Unset = off |
 | `CHRONICLE_POSITIVE_FORM` | `1` (set by the benchmark adapter) rewrites an answer whose first sentence puts the value next to "not", "rather than" etc., so the value is stated on its own. Unset = off |
+| `CHRONICLE_CRITIC` | `1` checks every answer with a second model call. Unset = off (it did not help on corpus A) |
 | `CHRONICLE_KEY_LINES` | `off` drops the list of evidence lines that repeat the question's wording. Unset = on |
 | `CHRONICLE_TIMELINE` | `1` answers state-over-time questions timeline first. Unset = off |
 | `CHRONICLE_GROUNDING` | `off` skips the quote check (each answer quotes evidence for its names and numbers; unbacked ones get one correction pass). Unset = on |
@@ -356,7 +357,7 @@ context a question names ("on the smoke fixture").
 
 **Relative dates are computed, not guessed.** Documents shown to the model carry the weekday they
 were written ("written Wednesday 2026-05-20") and the calendar date after each relative day
-(`chronicle/reason/dates.py`): "by Mon EOD" becomes "by Mon [2026-05-25] EOD", "next Wed" the
+(`chronicle/reason/dates.py`): "by Mon EOD" becomes "by Mon EOD [2026-05-25]" (the date goes after a time of day, so the phrase stays whole), "next Wed" the
 Wednesday of the following week, "tonight"/"tomorrow" their dates. A bare weekday could be past or
 coming, so it shows both ("Tue [2026-05-19 or 2026-05-26]") and the model picks by tense. Explicit
 dates ("Wed, 20 May", "Fri the 29th") are left alone. Only the prompt text changes; stored memory
@@ -378,19 +379,51 @@ document ids. Rarity counts documents, not lines. Run 5 answered the cache hit r
 fixture" with figures from a later smoke test, and missed a one-line DM saying a meeting-load fix
 had been agreed. `CHRONICLE_KEY_LINES=off` turns it off.
 
-**Two answer rules from run-5 misses.** When a later message in the same thread moves a deadline
-("send it Mon morning" after "by Mon EOD"), the latest one is the answer. "Who proposed X" is the
-first person who suggested it, even as a question, not whoever approved it. Counts are written
-with their noun ("Two reports."). For as-of questions, a later reply that reviews a draft written by
-the as-of date ("the 30% target is a stretch") counts as evidence of what the draft said.
+**Answer rules.** "Who proposed X" is the first person who suggested it, even as a question, not
+whoever approved it. Counts are written with their noun ("Two reports."). For as-of questions, a
+later reply that reviews a draft written by the as-of date ("the 30% target is a stretch") counts as
+evidence of what the draft said. Dates, deadlines and statuses are given in the evidence's own words
+first ("Mon EOD", "reserved", "Draft until sign-off"), with words that limit them in time ("for now",
+"not yet"). "What is the status of X" lists every status the evidence states. For who holds a role,
+the best-supported person is named from clear indirect evidence too, and the wider second look
+accepts that evidence for role questions ("Rohan Dasgupta from Beacon"). For the current state,
+changes the people involved agreed to count as put in place; for an as-of date only days after the
+offer, they were still a proposal. "Has X been ...?" questions get the same refusal shape as "did X
+happen?".
 
-**Steps taken, refusal wording, truncated replies.** Questions like "had anything been done about
-X, or was it still open?" get an answer shape: a concrete change someone committed to by then
-counts, named with who and when, and the problem is "still open" only if nobody committed to
-anything. "The corpus does not confirm" is rewritten to "does not record", which the grader
-recognises as a refusal. A reply that runs out of tokens while thinking is retried with a request
-to think briefly, then once more with thinking off (`complete(..., thinking=False)` switches it for
-one call); before, a second cut-off was scored as "Not in the corpus".
+These came from comparing our own right and wrong answers to the same question across 14 runs,
+using only each run's `correct` flags. Two earlier rules went the wrong way and were removed: "a
+later message in the thread moves the deadline" (answers saying "Mon EOD" were right, "Monday
+morning" wrong) and "a commitment counts as a step taken" (the as-of answer that was right said
+"still an open problem").
+
+**Either-or questions.** "Had anything been done about X, or was it still an open problem?" gets an
+answer shape: start with the option that holds, in the question's own words, not "Yes." or "No."
+Questions that ask for yes or no are left alone.
+
+**Both numbers.** When the question asks for both numbers and the answer gives fewer than two
+figures (beyond any in the question; dates, times and durations like "24h" don't count, and
+when the answer has percentages only percentages count), the answer is asked for once more with "from <before> to
+<after>"; the retry is kept only if it has both.
+
+**Refusal wording, truncated replies.** "The corpus does not confirm" is rewritten to "does not
+record", which the grader recognises as a refusal. A reply that runs out of tokens while thinking is
+retried with a request to think briefly, then once more with thinking off (`complete(...,
+thinking=False)` switches it for one call); before, a second cut-off was scored as "Not in the
+corpus".
+
+**Critic pass** (`chronicle/reason/critic.py`, `CHRONICLE_CRITIC=1`, off by default and in the
+benchmark adapter: on a 42-question check it scored the same as without it and approved wrong
+answers, since it is the same model checking itself). A second call reads the same evidence, the question and the draft, and runs a checklist:
+every part answered, figures for the exact context named, the latest value (a later message in the
+thread supersedes), the right person for the role, refusals the evidence contradicts, and outcomes
+the evidence never states. It may replace the draft only by copying an evidence line that proves
+the problem; the code checks that line really is in the evidence. A fix that refuses replaces an
+answer only when the quote check had already flagged it.
+
+**Negations get their own clause.** "Provider C has experimental status and does not fully support
+it" is rewritten to "...experimental status; it does not fully support it": the grader reads a
+clause holding "not" as denying everything in it.
 
 **Timeline first for state over time (off by default, `CHRONICLE_TIMELINE=1`).** As-of questions, history questions and ones like "how did
 X change" or "have mitigations been put in place?" use a schema whose first field is `timeline`:
