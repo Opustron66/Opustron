@@ -2,8 +2,9 @@
 
 The production entry point serves the built React UI and memory API on one
 origin. It never ingests documents or starts model calls on startup. This is a
-shared, password-protected demo over one memory state, not a multi-user account
-system. Everyone given the login sees the same facts and egress log.
+public demo over one approved synthetic memory state, not a multi-user account
+system. Everyone can see the same facts and egress log. Only use NVIDIA's
+published synthetic artifacts; do not upload private memories or personal logs.
 
 Chat is disabled by default. Browsing saved facts, timelines and entities does
 not use Nebius credits. Enabling chat allows paid calls for new questions.
@@ -21,10 +22,6 @@ npm.cmd ci
 npm.cmd run build
 Pop-Location
 
-$env:CHRONICLE_WEB_USERNAME = 'viewer'
-# Choose a password for this local test; do not commit or share it in logs.
-$LoginPassword = Read-Host 'Demo password' -AsSecureString
-$env:CHRONICLE_WEB_PASSWORD = [System.Net.NetworkCredential]::new('', $LoginPassword).Password
 $env:CHRONICLE_WEB_CHAT_ENABLED = '0'
 $env:CHRONICLE_STATE_DIR = "$PWD\data\hosted-state"
 $env:PORT = '8000'
@@ -32,14 +29,12 @@ $env:PORT = '8000'
 & .\.venv\Scripts\python.exe -m chronicle.web
 ```
 
-Open <http://localhost:8000> and enter the login. `/healthz` is the only public
-endpoint. It reports `memory_loaded: false` until facts have been imported.
-An empty memory is valid while waiting for a state transfer. Missing UI build
-files or login settings stop startup rather than expose a partially configured app.
+Open <http://localhost:8000>; no login is needed. `/healthz` reports
+`memory_loaded: false` until facts have been imported. An empty memory is valid
+while waiting for a state transfer. Missing UI build files stop startup.
 
 The hosted entry point binds to all interfaces. Use HTTPS through the hosting
-provider for remote access: HTTP Basic authentication must not be sent over
-unencrypted public connections. The local commands above use HTTP for localhost.
+provider for remote access. The local commands above use HTTP for localhost.
 
 ## Transfer an existing memory without re-ingesting
 
@@ -75,11 +70,10 @@ From the repo root, with Docker Desktop running in Linux-container mode:
 ```powershell
 docker build -f deploy/Dockerfile -t chronicle-web .
 docker volume create chronicle-data
-docker run --rm --name chronicle-web -p 127.0.0.1:8000:8000 --mount source=chronicle-data,target=/data --env CHRONICLE_WEB_USERNAME --env CHRONICLE_WEB_PASSWORD --env CHRONICLE_WEB_CHAT_ENABLED=0 chronicle-web
+docker run --rm --name chronicle-web -p 127.0.0.1:8000:8000 --mount source=chronicle-data,target=/data --env CHRONICLE_WEB_CHAT_ENABLED=0 chronicle-web
 ```
 
-This forwards the login variables set in the current PowerShell session. The
-image runs as UID 10001, builds the UI in a separate stage, and excludes local
+The image runs as UID 10001, builds the UI in a separate stage, and excludes local
 credentials, state and caches. The named volume preserves `/data/state` and
 `/data/.chronicle` (the egress log and response cache) across container restarts.
 Existing bind mounts or imported files must be writable by UID 10001.
@@ -136,11 +130,12 @@ snapshot configured, the app can still start empty while waiting for your friend
 
 1. Push the reviewed deployment changes to the branch you want to host.
 2. In Render, create a Blueprint from that repository and branch.
-3. Supply `CHRONICLE_WEB_USERNAME` and a strong `CHRONICLE_WEB_PASSWORD` when
-   prompted. Keep `CHRONICLE_WEB_CHAT_ENABLED=0`; no model key is needed yet.
+3. Keep `CHRONICLE_WEB_CHAT_ENABLED=0` and `CHRONICLE_WEB_EPHEMERAL=1`.
+   No username, password or model key is needed. Old `CHRONICLE_WEB_USERNAME`
+   and `CHRONICLE_WEB_PASSWORD` settings can be deleted; the app ignores them.
 4. Confirm the service plan is **Free** and no paid disk/database is selected,
    then deploy. The service uses the provider's `PORT`
-   and `/healthz` health check. Open the HTTPS URL and verify login and the empty
+   and `/healthz` health check. Open the HTTPS URL and verify public access and the empty
    memory screen. Automatic redeploys are disabled in the blueprint.
 5. When the archive is ready, add `CHRONICLE_STATE_SNAPSHOT_URL` and
    `CHRONICLE_STATE_SNAPSHOT_SHA256` in the service's environment settings.
@@ -155,7 +150,7 @@ exists. Use a new ZIP and checksum to replace the published dataset. This is a
 fixed snapshot demo; runtime changes are not saved permanently. Keep A and B in
 separate ZIPs and select the one you want to show.
 
-For judging, submit the service's HTTPS URL and demo login, explain the possible
+For judging, submit the service's HTTPS URL, explain the possible
 cold-start delay, and label the demo as memory browsing with live chat disabled.
 An empty state is useful for checking deployment but is not the finished demo.
 The friend's actual corpus and the free host's resource limits still need a live
@@ -212,7 +207,7 @@ Pop-Location
 ```
 
 The production-server tests replace model calls with a failing mock. They verify
-login, static assets, state import, health, disabled chat, budget prerequisites and
+public access, egress visibility, static assets, state import, health, disabled chat, budget prerequisites and
 request limits. Snapshot tests stub the HTTPS download and verify cold-start
 recovery, checksums, archive limits and rejected paths/content. They do not
 validate a live Render deployment or provider call.

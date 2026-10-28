@@ -14,9 +14,6 @@ from chronicle.reason.models import AnswerResult
 from chronicle.schema import Claim
 from chronicle.web import create_app
 
-AUTH = ("viewer", "test-password")
-
-
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     static = tmp_path / "ui"
@@ -29,8 +26,8 @@ def setup(tmp_path, monkeypatch):
                   valid_from="2026-05-01", observed_at="2026-05-01", doc_id="demo-1",
                   quote="Maya Patel owns the billing service.")
     (state / "claims.jsonl").write_text(claim.model_dump_json() + "\n", encoding="utf-8")
-    monkeypatch.setenv("CHRONICLE_WEB_USERNAME", AUTH[0])
-    monkeypatch.setenv("CHRONICLE_WEB_PASSWORD", AUTH[1])
+    monkeypatch.delenv("CHRONICLE_WEB_USERNAME", raising=False)
+    monkeypatch.delenv("CHRONICLE_WEB_PASSWORD", raising=False)
     monkeypatch.setenv("CHRONICLE_WEB_STATIC_DIR", str(static))
     monkeypatch.setenv("CHRONICLE_STATE_DIR", str(state))
     monkeypatch.setenv("CHRONICLE_WEB_CHAT_ENABLED", "0")
@@ -46,36 +43,43 @@ def setup(tmp_path, monkeypatch):
 def test_imported_memory_and_built_ui_share_one_origin(setup):
     with TestClient(create_app()) as client:
         assert client.get("/healthz").json() == {"status": "ok", "memory_loaded": True}
-        assert "production UI" in client.get("/", auth=AUTH).text
-        assert client.get("/app.js", auth=AUTH).status_code == 200
-        response = client.get("/api/facts", auth=AUTH)
+        assert "production UI" in client.get("/").text
+        assert client.get("/app.js").status_code == 200
+        response = client.get("/api/facts")
         assert response.json()[0]["subject"] == "Maya Patel"
         assert response.headers["cache-control"] == "no-store"
-        assert client.get("/api/egress", auth=AUTH).json() == []
-        assert client.get("/api/does-not-exist", auth=AUTH).status_code == 404
+        assert client.get("/api/egress").json() == []
+        assert client.get("/api/does-not-exist").status_code == 404
     assert (setup / "memory.sqlite3").is_file()
 
 
 @pytest.mark.parametrize("path", ["/", "/app.js", "/api/facts", "/api/egress"])
-def test_all_content_requires_login(setup, path):
+def test_public_content_does_not_challenge_for_login(setup, path):
     with TestClient(create_app()) as client:
-        assert client.get(path).status_code == 401
-        assert client.get(path, auth=(AUTH[0], "wrong")).status_code == 401
-        assert client.get(path, headers={"Authorization": "Basic invalid!!!"}).status_code == 401
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "www-authenticate" not in response.headers
+        # Old browser credentials do not restore a login requirement.
+        assert client.get(path, headers={"Authorization": "Basic invalid!!!"}).status_code == 200
 
 
-def test_chat_is_disabled_even_with_login_and_model_key(setup, monkeypatch):
+def test_chat_is_disabled_even_with_model_key(setup, monkeypatch):
     monkeypatch.setenv("NEBIUS_API_KEY", "dummy-not-a-real-key")
     with TestClient(create_app()) as client:
-        response = client.post("/api/ask", auth=AUTH, json={"question": "Who owns billing?"})
+        response = client.post("/api/ask", json={"question": "Who owns billing?"})
         assert response.status_code == 503
         assert "disabled" in response.json()["detail"]
 
 
-def test_missing_login_fails_at_startup(setup, monkeypatch):
-    monkeypatch.delenv("CHRONICLE_WEB_PASSWORD")
-    with pytest.raises(ValueError, match="CHRONICLE_WEB_PASSWORD"):
-        create_app()
+def test_public_egress_still_returns_the_log(setup):
+    from chronicle.web import get_logger
+
+    get_logger().log(provider="fixture", model="offline", redacted=True,
+                     request_preview="Who owns ORG_1?")
+    with TestClient(create_app()) as client:
+        response = client.get("/api/egress")
+        assert response.status_code == 200
+        assert response.json()[0]["request_preview"] == "Who owns ORG_1?"
 
 
 @pytest.mark.parametrize("cap", ["0", "-1", "nan", "inf"])
@@ -104,11 +108,10 @@ def test_chat_limit_and_cross_site_guard_before_answering(setup, monkeypatch):
     monkeypatch.setattr("chronicle.memory.server.answer_question", answer)
     with TestClient(create_app()) as client:
         question = {"question": "Who owns billing?"}
-        assert client.post("/api/ask", json=question).status_code == 401
-        assert client.post("/api/ask", auth=AUTH, json=question,
+        assert client.post("/api/ask", json=question,
                            headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
-        assert client.post("/api/ask", auth=AUTH, json=question).json()["answer"] == "Maya Patel"
-        response = client.post("/api/ask", auth=AUTH, json=question)
+        assert client.post("/api/ask", json=question).json()["answer"] == "Maya Patel"
+        response = client.post("/api/ask", json=question)
         assert response.status_code == 429
         assert response.headers["retry-after"] == "60"
         answer.assert_called_once()
@@ -118,7 +121,7 @@ def test_empty_memory_is_healthy_while_waiting_for_state(setup):
     (setup / "claims.jsonl").unlink()
     with TestClient(create_app()) as client:
         assert client.get("/healthz").json() == {"status": "ok", "memory_loaded": False}
-        assert client.get("/api/facts", auth=AUTH).json() == []
+        assert client.get("/api/facts").json() == []
 
 
 def test_import_loads_topic_pages_without_a_database_backup(setup):
@@ -129,7 +132,7 @@ def test_import_loads_topic_pages_without_a_database_backup(setup):
                          "observed_at": "2026-05-01"}]}
     (setup / "pages.jsonl").write_text(json.dumps(page) + "\n", encoding="utf-8")
     with TestClient(create_app()) as client:
-        facts = client.get("/api/facts", auth=AUTH).json()
+        facts = client.get("/api/facts").json()
         assert {f["kind"] for f in facts} == {"claim", "topic"}
 
 
@@ -148,10 +151,10 @@ def test_overlapping_questions_do_not_start_another_answer(setup, monkeypatch):
     monkeypatch.setattr("chronicle.memory.server.answer_question", model)
     with TestClient(create_app()) as client, ThreadPoolExecutor(max_workers=1) as pool:
         question = {"question": "Who owns billing?"}
-        first = pool.submit(client.post, "/api/ask", auth=AUTH, json=question)
+        first = pool.submit(client.post, "/api/ask", json=question)
         try:
             assert entered.wait(5)
-            assert client.post("/api/ask", auth=AUTH, json=question).status_code == 429
+            assert client.post("/api/ask", json=question).status_code == 429
         finally:
             release.set()
         assert first.result(timeout=5).status_code == 200

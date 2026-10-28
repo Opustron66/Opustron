@@ -1,11 +1,8 @@
 """Hosted UI and API: ``python -m chronicle.web`` (no ingestion on startup)."""
 
 import asyncio
-import base64
-import binascii
 import math
 import os
-import secrets
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -22,11 +19,7 @@ from chronicle.memory.server import router
 
 
 def create_app() -> FastAPI:
-    """Single-process shared demo, protected by browser HTTP Basic authentication."""
-    username = os.environ.get("CHRONICLE_WEB_USERNAME", "")
-    password = os.environ.get("CHRONICLE_WEB_PASSWORD", "")
-    if not username or not password or ":" in username:
-        raise ValueError("Set CHRONICLE_WEB_USERNAME (without ':') and CHRONICLE_WEB_PASSWORD")
+    """Single-process public demo over an approved synthetic memory state."""
     static = Path(os.environ.get("CHRONICLE_WEB_STATIC_DIR", Path(__file__).resolve().parents[1] / "ui/dist"))
     if not (static / "index.html").is_file():
         raise ValueError("Build the UI with npm run build, or set CHRONICLE_WEB_STATIC_DIR")
@@ -62,26 +55,10 @@ def create_app() -> FastAPI:
     ask_lock = asyncio.Lock()
     asks: deque[float] = deque()
 
-    def authenticated(header: str) -> bool:
-        try:
-            scheme, value = header.split(" ", 1)
-            if scheme.lower() != "basic":
-                return False
-            user, secret = base64.b64decode(value, validate=True).decode("utf-8").split(":", 1)
-        except (ValueError, UnicodeError, binascii.Error):
-            return False
-        user_ok = secrets.compare_digest(user.encode(), username.encode())
-        password_ok = secrets.compare_digest(secret.encode(), password.encode())
-        return user_ok and password_ok
-
     @app.middleware("http")
     async def protect(request: Request, call_next):
         if request.url.path == "/healthz" and request.method in {"GET", "HEAD"}:
             return await call_next(request)
-        if not authenticated(request.headers.get("authorization", "")):
-            return JSONResponse({"detail": "Sign in to Chronicle"}, status_code=401,
-                                headers={"WWW-Authenticate": 'Basic realm="Chronicle", charset="UTF-8"',
-                                         "Cache-Control": "no-store"})
         if request.method == "POST" and request.url.path.rstrip("/") == "/api/ask":
             if not chat:
                 return JSONResponse({"detail": "Chat is disabled. Saved memory is available to browse."},

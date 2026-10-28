@@ -10,10 +10,6 @@ services:
     healthCheckPath: /healthz
     autoDeployTrigger: off
     envVars:
-      - key: CHRONICLE_WEB_USERNAME
-        sync: false
-      - key: CHRONICLE_WEB_PASSWORD
-        sync: false
       - key: CHRONICLE_WEB_CHAT_ENABLED
         value: "0"
       - key: CHRONICLE_WEB_EPHEMERAL
