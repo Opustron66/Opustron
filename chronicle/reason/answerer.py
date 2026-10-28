@@ -12,17 +12,65 @@ from datetime import date
 from chronicle.guard import llm
 
 from .dates import annotate_dates
+from .grounding import unsupported
 from .models import AnswerResult, Evidence, QueryPlan
+
+SUPPORT = {"type": "array", "items": {
+    "type": "object",
+    "properties": {"doc_id": {"type": "string"}, "quote": {"type": "string"}},
+    "required": ["quote"],
+    "additionalProperties": False,
+}}
+TIMELINE = {"type": "array", "items": {
+    "type": "object",
+    "properties": {
+        "date": {"type": "string"},
+        "event": {"type": "string"},
+        "status": {"type": "string", "enum": ["stated", "proposed", "decided", "scheduled", "done"]},
+        "doc_id": {"type": "string"},
+    },
+    "required": ["date", "event", "status"],
+    "additionalProperties": False,
+}}
 
 ANSWER_SCHEMA = {
     "type": "object",
     "properties": {
         "answer": {"type": "string"},
         "source_ids": {"type": "array", "items": {"type": "string"}},
+        "support": SUPPORT,
     },
     "required": ["answer", "source_ids"],
     "additionalProperties": False,
 }
+# The timeline comes first so the model writes it before the answer.
+TIMELINE_SCHEMA = {
+    "type": "object",
+    "properties": {"timeline": TIMELINE, **ANSWER_SCHEMA["properties"]},
+    "required": ["timeline", "answer", "source_ids"],
+    "additionalProperties": False,
+}
+
+GROUNDING = """Support: also fill "support" with one to three short quotes copied word for word from the
+evidence (each under 30 words, with its document id) that state the names, numbers and status in
+your answer. Put nothing in the answer that you cannot quote. An answer saying the corpus does not
+record something needs no quotes."""
+
+TIMELINE_RULE = """Timeline first: before answering, fill "timeline" with the dated events about the
+subject of the question, oldest first (at most 12), each with its status (stated, proposed,
+decided, scheduled or done) and document id. A proposal is decided once the people involved
+commit to it; scheduled is not done. Then answer from the timeline: the state on the date asked,
+or where it started and where it ended."""
+
+_TIMELINE_Q = re.compile(
+    r"\bhow .{0,60}\bchanged\b|\bwhere it (?:started|ended)\b|\bover the (?:corpus )?(?:window|period)\b"
+    r"|\bstill (?:unaddressed|open|an open)\b|\b(?:has|had) anything been done\b|\bput in place\b",
+    re.IGNORECASE)
+
+
+def needs_timeline(plan: QueryPlan) -> bool:
+    """State-over-time questions: as-of, history, and "has anything been done / how did it change"."""
+    return plan.kind == "as_of" or plan.question_type == "history" or bool(_TIMELINE_Q.search(plan.question))
 
 FALLBACK_CONTRACT = """Answer the question from the memory you built out of the corpus.
 Rules:
@@ -61,11 +109,7 @@ ANSWER_FORM = """How to write the answer:
   before and after ("from 40% to 65%").
 - When the question names a specific context (a fixture, environment, test, tier or date), use
   only figures stated for that exact context, not similar figures from other tests or later runs.
-- For who holds a role, answer from clear indirect evidence too: if documents tie a person to a
-  role or project ("Priya's team" builds Orion; Priya added Orion's registry), name the
-  best-supported person with their full name rather than saying the corpus does not record it.
-  This is only for people and roles, never for what happened at an event: an agenda or plan is not
-  a record of what was discussed or decided.
+- An agenda or plan is not a record of what was discussed or decided at an event.
 - A decision or commitment someone makes about their own work or calendar ("I'll take over the
   slot", "we're moving the sync to biweekly"), especially once the others agree, counts as a step
   taken: list it as in place. This does not apply to scheduled events (reviews, launches,
@@ -127,8 +171,10 @@ AGENT_SCHEMA = {
     "type": "object",
     "properties": {
         "action": {"type": "string", "enum": ["answer", "search", "open"]},
+        "timeline": TIMELINE,
         "answer": {"type": "string"},
         "source_ids": {"type": "array", "items": {"type": "string"}},
+        "support": SUPPORT,
         "queries": {"type": "array", "items": {"type": "string"}},
         "doc_ids": {"type": "array", "items": {"type": "string"}},
     },
@@ -190,7 +236,9 @@ def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last:
         reference += ('For "had X happened by then?" answer "Yes." or "No." first, then the value it held '
                       'on that date in positive form (e.g. "It was still in beta.", not "It had not '
                       'launched.") and, if it changed later, the date it changed.\n\n')
-    system = f"{_contract()}\n\n{EVIDENCE_GUIDE}\n\n{EVIDENCE_RULES}\n\n{ANSWER_FORM}"
+    system = f"{_contract()}\n\n{EVIDENCE_GUIDE}\n\n{EVIDENCE_RULES}\n\n{ANSWER_FORM}\n\n{GROUNDING}"
+    if needs_timeline(plan):
+        system += f"\n\n{TIMELINE_RULE}"
     if template := answer_template(plan):
         system += f"\n\n{template}"
     user = f"{reference}EVIDENCE:\n{context}\n\nQUESTION: {plan.question}"
@@ -274,8 +322,8 @@ def generate_answer(plan: QueryPlan, evidence: list[Evidence], tools: Tools | No
         return AnswerResult("Not in the corpus", [])
     evidence = list(evidence)
     if tools is None:
-        parsed = _complete(_messages(plan, evidence, agentic=False, last=True, hint=hint), ANSWER_SCHEMA,
-                           temperature)
+        parsed = _complete(_messages(plan, evidence, agentic=False, last=True, hint=hint),
+                           TIMELINE_SCHEMA if needs_timeline(plan) else ANSWER_SCHEMA, temperature)
     else:
         note = ""
         for round_number in range(1, MAX_ROUNDS + 1):
@@ -304,4 +352,6 @@ def generate_answer(plan: QueryPlan, evidence: list[Evidence], tools: Tools | No
     answer = parsed.get("answer", "Not in the corpus")
     if not isinstance(answer, str) or not answer.strip():
         answer = "Not in the corpus"
-    return AnswerResult(answer=answer, source_ids=ids)
+    texts = [t for e in evidence for t in (e.text, _render(e))]
+    return AnswerResult(answer=answer, source_ids=ids,
+                        unsupported=unsupported(answer, parsed.get("support"), plan.question, texts))

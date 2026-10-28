@@ -53,6 +53,7 @@ set -a; source .env; set +a
 | `CHRONICLE_SECOND_LOOK` | `off` disables the wider retry for answers that say the corpus is silent. Unset = on |
 | `CHRONICLE_VOTE` | `1` (set by the benchmark adapter) answers flip-prone questions (yes/no, "which one", "how many", as-of) up to three times and keeps the majority. Unset = off |
 | `CHRONICLE_POSITIVE_FORM` | `1` (set by the benchmark adapter) rewrites an answer whose first sentence puts the value next to "not", "rather than" etc., so the value is stated on its own. Unset = off |
+| `CHRONICLE_GROUNDING` | `off` skips the quote check (each answer quotes evidence for its names and numbers; unbacked ones get one correction pass). Unset = on |
 | `CHRONICLE_FULL_CORPUS` | `1` answers every question over the whole corpus (all documents, oldest first) instead of retrieved evidence; for corpora that fit the model context. Unset = off |
 
 ## Calling a model: always use `chronicle.guard.llm`
@@ -325,9 +326,9 @@ sentence ("Phoenix.", "Duplicated.", not "Phoenix is not a real project"), gives
 no hedge after an answer it has given, leaves out superseded values unless asked for
 the history, counts every distinct instance for "how many" questions, and words a gap
 as "The corpus does not record ...". As-of yes/no questions answer "Yes." or "No."
-first. "Both numbers" questions give the value before and after. A person's role
-may be answered from clear indirect evidence ("Priya's team builds Orion"), but an agenda is never
-treated as a record of what a meeting discussed. A commitment someone makes about their own work
+first. "Both numbers" questions give the value before and after. An agenda is never
+treated as a record of what a meeting discussed. (A rule letting a person's role be inferred from
+indirect evidence was tried and removed: run 5 named the wrong person on two attribution questions.) A commitment someone makes about their own work
 ("I'll take over the slot") counts as a step taken; scheduled events still need evidence they
 happened. For as-of questions, a change written after the
 date ("from 30d to 14d") may supply the old value. Retrieval packs about 10k tokens of evidence (`CHAR_BUDGET` 40,000 characters).
@@ -358,6 +359,18 @@ Wednesday of the following week, "tonight"/"tomorrow" their dates. A bare weekda
 coming, so it shows both ("Tue [2026-05-19 or 2026-05-26]") and the model picks by tense. Explicit
 dates ("Wed, 20 May", "Fri the 29th") are left alone. Only the prompt text changes; stored memory
 does not. The model had answered one deadline as 23, 24 and 25 May in different runs.
+
+**Quoted support, checked in code** (`chronicle/reason/grounding.py`). Every answer also returns
+`support`: one to three quotes copied word for word from the evidence. The code checks each quote
+really occurs in the evidence, then that every name, merge request number, percentage or
+multi-digit number, and a short answer's own words, appear in a verified quote. Anything left over
+sends the answer back once with the list ("these parts were not backed by a quote"); the
+better-backed answer is kept. Run 5 had answered "ready to merge" for a reserved placeholder MR.
+
+**Timeline first for state over time.** As-of questions, history questions and ones like "how did
+X change" or "have mitigations been put in place?" use a schema whose first field is `timeline`:
+dated events about the subject, oldest first, each marked stated, proposed, decided, scheduled or
+done. The answer is then read off that timeline (the Chain-of-Note idea from LongMemEval).
 
 **Whole-corpus answering (experiment).** `CHRONICLE_FULL_CORPUS=1` skips retrieval and gives the
 model every document, oldest first, in one prompt (corpus A is about 120k tokens; Nemotron Ultra

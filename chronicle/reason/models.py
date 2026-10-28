@@ -24,3 +24,5 @@ class Evidence:
 class AnswerResult:
     answer: str
     source_ids: list[str] = field(default_factory=list)
+    # Names/numbers/values in the answer that no verified evidence quote backs (grounding.py).
+    unsupported: list[str] = field(default_factory=list, compare=False)

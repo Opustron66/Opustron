@@ -47,7 +47,8 @@ def test_jsonl_and_ui_send_identical_temporal_evidence(tmp_path, claims, questio
         assert f'): {owner} owns' in messages[1]["content"]
         other = "Noah Williams" if owner == "Maya Patel" else "Maya Patel"
         assert f'): {other} owns' not in messages[1]["content"]
-        return {"answer": owner, "source_ids": [source, "invented"]}
+        return {"answer": owner, "source_ids": [source, "invented"],
+                "support": [{"quote": f"{owner} owns billing service"}]}
 
     with patch("chronicle.reason.answerer.llm.complete", side_effect=complete):
         output = io.StringIO()

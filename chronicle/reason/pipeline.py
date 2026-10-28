@@ -67,6 +67,25 @@ _YES_NO = re.compile(r"^\W*(yes|no)\b", re.IGNORECASE)
 _FIRST_SENTENCE = re.compile(r"[.!?](?:\s|$)|\n")
 
 
+def grounding_enabled() -> bool:
+    return os.environ.get("CHRONICLE_GROUNDING", "1").lower() not in ("0", "false", "no", "off")
+
+
+def recheck_hint(missing: list[str]) -> str:
+    return ("Check your previous answer: these parts were not backed by a quote copied word for word from "
+            f"the evidence: {', '.join(missing[:8])}. Re-read the evidence. Correct or remove each one, and "
+            "quote the exact lines that support what you keep. If nothing supports an answer, say the corpus "
+            "does not record it.")
+
+
+def recheck(plan: QueryPlan, result: AnswerResult, again: Callable[[str], AnswerResult]) -> AnswerResult:
+    """One correction pass for an answer with unsupported names/numbers; the better-backed one stays."""
+    if not result.unsupported or gave_up(result.answer):
+        return result
+    retry = again(recheck_hint(result.unsupported))
+    return retry if len(retry.unsupported) < len(result.unsupported) else result
+
+
 def positive_form_enabled() -> bool:
     """CHRONICLE_POSITIVE_FORM=1 (the benchmark adapter sets it): rewrite answers whose first
     sentence puts the value next to a negation. Off by default."""
@@ -166,6 +185,8 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
         result = generate_answer(plan, evidence, tools)
         if vote_enabled() and is_hard(plan):
             result = vote(result, lambda t: generate_answer(plan, evidence, tools, temperature=t))
+        if grounding_enabled():
+            result = recheck(plan, result, lambda hint: generate_answer(plan, evidence, tools, hint))
         if gave_up(result.answer) and second_look_enabled():
             # Kept only when it answers and cites, so a correct "not recorded" survives a retry that
             # finds nothing.
