@@ -77,6 +77,7 @@ def test_answer_form_rules_are_in_every_prompt():
     assert '"Phoenix."' in system
     assert "count every distinct one" in system
     assert 'The corpus does not record <it>.' in system
+    assert "before and after" in system and "clear indirect evidence" in system
 
 
 def test_as_of_questions_ask_for_yes_or_no_first():
@@ -95,3 +96,13 @@ def test_as_of_questions_ask_for_yes_or_no_first():
 def test_how_was_questions_get_the_outcome_template():
     from chronicle.reason.answerer import answer_template
     assert "does not record" in answer_template(QueryPlan("How was the 30ms token-transit window resolved?"))
+
+
+def test_as_of_later_documents_may_supply_the_old_value_of_a_change():
+    from datetime import date
+
+    from chronicle.reason.answerer import _messages
+    plan = QueryPlan("As of 2026-05-20, what was the default window?", kind="as_of", reference_date=date(2026, 5, 20))
+    evidence = [Evidence("E:new", "lowered the default from 30d to 14d", "2026-05-25", kind="later")]
+    user = _messages(plan, evidence, agentic=False, last=True)[1]["content"]
+    assert "report the old value" in user and "never report the new values" in user

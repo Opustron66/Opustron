@@ -55,8 +55,21 @@ ANSWER_FORM = """How to write the answer:
   plans or old proposals unless the question asks for the history.
 - When the question asks how many, or for each/all items, count every distinct one in the
   evidence (same name but different date, purpose or owner = distinct) and list them all.
+- When the question asks for both numbers, or what something did to a value, give the value
+  before and after ("from 40% to 65%").
+- Answer from clear indirect evidence too: if documents tie a person to a role or project
+  ("Priya's team" builds Orion; Priya added Orion's registry), name that person. "The corpus does
+  not record" is for what the evidence does not address, not for answers it implies.
 - When the corpus does not record what was asked, say "The corpus does not record <it>." and
   describe no outcome."""
+
+# An as-of question may only be answerable from a later document that records the change: "lowered
+# the default from 30d to 14d" written after the date is the only statement of the old value.
+AS_OF_LATER = ("never report the new values they introduce as the answer. They can still show what held "
+               'before: a change written later ("raised the limit from 5 to 8") means the old value (5) '
+               "held on the as-of date, so report the old value. Otherwise use them only to say that "
+               "something had not happened yet, or was not yet decided, by the as-of date (and when it "
+               "happened).")
 
 def _contract() -> str:
     try:
@@ -149,9 +162,7 @@ def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last:
     reference = f"Answer as of {plan.reference_date.isoformat()}.\n\n" if plan.reference_date else ""
     if plan.reference_date and any(e.kind == "later" for e in evidence):
         reference = (f"Answer as of {plan.reference_date.isoformat()}. Documents marked WRITTEN AFTER THE "
-                     "AS-OF DATE are not true as of that date: never report their values as the answer. "
-                     "Use them only to say that something had not happened yet, or was not yet decided, "
-                     "by the as-of date (and when it happened).\n\n")
+                     f"AS-OF DATE are not true as of that date: {AS_OF_LATER}\n\n")
     if plan.reference_date:
         reference += ('For "had X happened by then?" answer "Yes." or "No." first, then the value it held '
                       'on that date in positive form (e.g. "It was still in beta.", not "It had not '
@@ -180,10 +191,9 @@ def corpus_messages(plan: QueryPlan, corpus: list[Evidence]) -> list[dict]:
     tail = []
     if plan.reference_date:
         day = plan.reference_date.isoformat()
-        tail.append(f"Answer as of {day}. Documents written after {day} were not known then: never report "
-                    "their values as the answer. Use them only to say that something had not happened yet, "
-                    'or was not yet decided, by that date (and when it happened). For "had X happened by '
-                    'then?" answer "Yes." or "No." first, then the value it held on that date in positive form.')
+        tail.append(f"Answer as of {day}. Documents written after {day} were not known then: {AS_OF_LATER} "
+                    'For "had X happened by then?" answer "Yes." or "No." first, then the value it held on '
+                    "that date in positive form.")
     if template := answer_template(plan):
         tail.append(template)
     context = "\n\n".join(_render(e) for e in corpus)
