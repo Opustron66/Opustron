@@ -79,6 +79,7 @@ def test_answer_form_rules_are_in_every_prompt():
     assert 'The corpus does not record <it>.' in system
     assert "before and after" in system and "clear indirect evidence" in system
     assert "only for people and roles" in system
+    assert "names a specific context" in system
 
 
 def test_as_of_questions_ask_for_yes_or_no_first():

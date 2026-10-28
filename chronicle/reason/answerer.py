@@ -57,6 +57,8 @@ ANSWER_FORM = """How to write the answer:
   evidence (same name but different date, purpose or owner = distinct) and list them all.
 - When the question asks for both numbers, or what something did to a value, give the value
   before and after ("from 40% to 65%").
+- When the question names a specific context (a fixture, environment, test, tier or date), use
+  only figures stated for that exact context, not similar figures from other tests or later runs.
 - For who holds a role, answer from clear indirect evidence too: if documents tie a person to a
   role or project ("Priya's team" builds Orion; Priya added Orion's registry), name that person.
   This is only for people and roles, never for what happened at an event: an agenda or plan is not

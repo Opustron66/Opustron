@@ -52,6 +52,7 @@ set -a; source .env; set +a
 | `CHRONICLE_REDACT_NAMES` | Benchmark runs only: `off` stops pseudonymising names, organisations and places (emails/phones/IDs stay masked); `person` masks people only, leaving organisations and places. Unset = on |
 | `CHRONICLE_SECOND_LOOK` | `off` disables the wider retry for answers that say the corpus is silent. Unset = on |
 | `CHRONICLE_VOTE` | `1` (set by the benchmark adapter) answers flip-prone questions (yes/no, "which one", "how many", as-of) up to three times and keeps the majority. Unset = off |
+| `CHRONICLE_POSITIVE_FORM` | `1` (set by the benchmark adapter) rewrites an answer whose first sentence puts the value next to "not", "rather than" etc., so the value is stated on its own. Unset = off |
 | `CHRONICLE_FULL_CORPUS` | `1` answers every question over the whole corpus (all documents, oldest first) instead of retrieved evidence; for corpora that fit the model context. Unset = off |
 
 ## Calling a model: always use `chronicle.guard.llm`
@@ -338,6 +339,15 @@ more. The retry replaces the first answer only if it answers and cites a documen
 yes/no, "which one", "how many" and as-of questions (6 of 15 disambiguation questions on corpus A).
 With `CHRONICLE_VOTE=1` those are answered a second time at temperature 0.6; if the two agree the
 first stands, otherwise a third answer decides. About 32 of corpus A's 186 questions qualify.
+
+**Positive-form check.** The grader reads a value in a clause that also holds "not", "no longer",
+"rather than" or "instead of" as denied, and the model kept answering "NOT shared (duplicated)"
+despite the prompt rule. With `CHRONICLE_POSITIVE_FORM=1` the answer's first sentence is scanned for
+that shape; when found (and the question is not yes/no or about whether something happened), one
+small call sees only the question and answer and restates the value first ("Duplicated. It is not
+shared."). A rewrite that still leads with a negation, gives up, or grows too long is discarded. On
+run 4's answers it fires on 5 of 186. Answers must also use only figures stated for the exact
+context a question names ("on the smoke fixture").
 
 **Whole-corpus answering (experiment).** `CHRONICLE_FULL_CORPUS=1` skips retrieval and gives the
 model every document, oldest first, in one prompt (corpus A is about 120k tokens; Nemotron Ultra

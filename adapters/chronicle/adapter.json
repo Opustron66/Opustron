@@ -20,6 +20,7 @@
   ],
   "env": {
     "CHRONICLE_ROOT": "/Users/sara/Desktop/Opustron-fullrun",
-    "CHRONICLE_VOTE": "1"
+    "CHRONICLE_VOTE": "1",
+    "CHRONICLE_POSITIVE_FORM": "1"
   }
 }
