@@ -34,6 +34,9 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setenv("CHRONICLE_WEB_STATIC_DIR", str(static))
     monkeypatch.setenv("CHRONICLE_STATE_DIR", str(state))
     monkeypatch.setenv("CHRONICLE_WEB_CHAT_ENABLED", "0")
+    monkeypatch.setenv("CHRONICLE_WEB_EPHEMERAL", "0")
+    monkeypatch.delenv("CHRONICLE_STATE_SNAPSHOT_URL", raising=False)
+    monkeypatch.delenv("CHRONICLE_STATE_SNAPSHOT_SHA256", raising=False)
     monkeypatch.setenv("CHRONICLE_WEB_ASKS_PER_MINUTE", "6")
     monkeypatch.setattr(LLMClient, "complete", Mock(side_effect=AssertionError("No model calls permitted")))
     monkeypatch.setattr("chronicle.web.get_logger", lambda: EgressLogger(tmp_path / "egress.log"))
@@ -153,3 +156,20 @@ def test_overlapping_questions_do_not_start_another_answer(setup, monkeypatch):
             release.set()
         assert first.result(timeout=5).status_code == 200
         model.assert_called_once()
+
+
+def test_ephemeral_hosting_cannot_enable_paid_chat(setup, monkeypatch):
+    monkeypatch.setenv("CHRONICLE_WEB_EPHEMERAL", "1")
+    monkeypatch.setenv("CHRONICLE_WEB_CHAT_ENABLED", "1")
+    with pytest.raises(ValueError, match="spending logs reset"):
+        create_app()
+
+
+def test_configured_snapshot_is_loaded_before_opening_memory(setup, monkeypatch):
+    restore = Mock(return_value=setup)
+    monkeypatch.setattr("chronicle.web.restore_snapshot", restore)
+    monkeypatch.setenv("CHRONICLE_STATE_SNAPSHOT_URL", "https://files.example/state.zip")
+    monkeypatch.setenv("CHRONICLE_STATE_SNAPSHOT_SHA256", "0" * 64)
+    with TestClient(create_app()) as client:
+        assert client.get("/healthz").json()["memory_loaded"] is True
+    restore.assert_called_once_with(setup, "https://files.example/state.zip", "0" * 64)

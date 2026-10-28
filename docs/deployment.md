@@ -7,6 +7,8 @@ system. Everyone given the login sees the same facts and egress log.
 
 Chat is disabled by default. Browsing saved facts, timelines and entities does
 not use Nebius credits. Enabling chat allows paid calls for new questions.
+The supplied Render blueprint uses the Free plan, with no paid disk. It can
+restore the same saved-memory ZIP after every restart without model calls.
 
 ## Verify locally from Windows PowerShell
 
@@ -84,44 +86,95 @@ Existing bind mounts or imported files must be writable by UID 10001.
 
 In another terminal, import the archive's contents into the stopped service's
 volume. For a local container with an empty state, you can stop it, then run a
-temporary container to copy files; for Render use its shell as described below.
+temporary container to copy files. Render Free has no shell access: use the
+startup snapshot download described below instead.
 Do not include state in the container image.
 
 ## Render deployment
 
-`render.yaml` describes one Docker web service with a 1 GB persistent disk at
-`/data`. The standard instance is selected for headroom for the Python and spaCy
-dependencies; this is a paid hosting resource. Nothing is provisioned by merely
-adding these files. Review the current plan and disk price in Render before
-creating the service. Do not enable multiple instances or Uvicorn workers: the
-demo uses one SQLite database and a process-local chat limit.
+`render.yaml` describes one Free Docker web service in Singapore, without a paid
+disk or database. Nothing is provisioned by adding these files. It is a demo
+configuration, not a guarantee of availability. Render Free sleeps after 15
+minutes without traffic and can take about a minute to wake. SQLite, logs and
+caches on its filesystem disappear on restart, redeploy or sleep. It has no SSH
+or dashboard shell. The snapshot loader rebuilds SQLite from saved JSONL files;
+it never reruns model extraction.
+
+Do not enable multiple instances or Uvicorn workers. Paid chat is explicitly
+blocked while `CHRONICLE_WEB_EPHEMERAL=1`, because losing the spending log would
+reset the local budget accounting.
+
+### Prepare the friend's saved memory
+
+Create a ZIP with exactly these three files at its root (no enclosing directory):
+`claims.jsonl`, `docs.jsonl`, `pages.jsonl`. Do not include SQLite files, caches,
+credentials, or gold answers. This format can rebuild the memory without a
+database backup. Keep the original archive unchanged.
+
+In PowerShell, after receiving the state folder:
+
+```powershell
+$State = 'C:\path\to\friends-state'
+Compress-Archive -LiteralPath "$State\claims.jsonl", "$State\docs.jsonl", "$State\pages.jsonl" -DestinationPath "$PWD\.tmp\memory-state.zip"
+Get-FileHash "$PWD\.tmp\memory-state.zip" -Algorithm SHA256
+```
+
+Store that archive at a stable HTTPS download URL that returns ZIP bytes, not
+a file-sharing preview page. Use private access where appropriate; the URL can
+contain a download token and must be set as a server-side secret. The URL must
+remain valid for future cold starts. Do not commit the archive or URL to Git,
+or place it under the public UI assets. Confirm you have permission to host
+the transferred state.
+
+The loader requires the archive's SHA-256, limits downloads to 32 MiB and expanded
+contents to 128 MiB, and accepts only the three fixed JSONL filenames. It verifies
+the checksum and rows before loading a separate state directory, leaving existing
+state untouched. Missing or invalid configured snapshots stop startup. With no
+snapshot configured, the app can still start empty while waiting for your friend.
+
+### Create the free service
 
 1. Push the reviewed deployment changes to the branch you want to host.
 2. In Render, create a Blueprint from that repository and branch.
 3. Supply `CHRONICLE_WEB_USERNAME` and a strong `CHRONICLE_WEB_PASSWORD` when
    prompted. Keep `CHRONICLE_WEB_CHAT_ENABLED=0`; no model key is needed yet.
-4. Review the paid resources, then deploy. The service uses the provider's `PORT`
+4. Confirm the service plan is **Free** and no paid disk/database is selected,
+   then deploy. The service uses the provider's `PORT`
    and `/healthz` health check. Open the HTTPS URL and verify login and the empty
    memory screen. Automatic redeploys are disabled in the blueprint.
-5. Transfer the friend's state archive to the service through Render's shell
-   using a temporary private download URL or your chosen secure file transfer.
-   Extract only the expected state files into a fresh directory on `/data`.
-   Never expose the archive through the UI's static directory or commit it to Git.
-6. Set `CHRONICLE_STATE_DIR` to that directory and restart the service. Verify
+5. When the archive is ready, add `CHRONICLE_STATE_SNAPSHOT_URL` and
+   `CHRONICLE_STATE_SNAPSHOT_SHA256` in the service's environment settings.
+   These are optional until you receive the files; never substitute a source
+   corpus URL, since the loader expects already-extracted memory.
+6. Restart the service. Verify
    `memory_loaded: true`, visible facts and the expected date span.
 
-Render's persistent disk survives restarts and redeploys; its ordinary container
-filesystem does not. Keep state, cache and accounting logs on `/data`. Disk-backed
-services have deployment availability limits; review Render's documentation
-before promising uninterrupted availability.
+The loader recreates state under `/data/state/snapshot-<sha256>` on a fresh
+instance. A previously verified local snapshot can be reused while that instance
+exists. Use a new ZIP and checksum to replace the published dataset. This is a
+fixed snapshot demo; runtime changes are not saved permanently. Keep A and B in
+separate ZIPs and select the one you want to show.
+
+For judging, submit the service's HTTPS URL and demo login, explain the possible
+cold-start delay, and label the demo as memory browsing with live chat disabled.
+An empty state is useful for checking deployment but is not the finished demo.
+The friend's actual corpus and the free host's resource limits still need a live
+check. Free hosting does not include Nebius inference credits.
+
+Render includes usage allowances for bandwidth and builds. To avoid overage
+charges, do not add a payment method for this demo, or configure the applicable
+account spending controls. Free services can be suspended when allowances are
+exhausted. Do not assume free means unlimited.
 
 References: [Docker services](https://render.com/docs/docker),
-[persistent disks](https://render.com/docs/disks),
+[Free plan limits](https://render.com/docs/free),
 [Blueprint configuration](https://render.com/docs/blueprint-spec).
 
 ## Enable paid chat later
 
-Only do this after approving model spending. In the hosting dashboard set:
+This is not supported by the Free blueprint. To enable chat later, first move
+to durable storage for `/data` (including the egress log), explicitly set
+`CHRONICLE_WEB_EPHEMERAL=0`, and approve model spending. Then set:
 
 | Variable | Value |
 | --- | --- |
@@ -160,4 +213,6 @@ Pop-Location
 
 The production-server tests replace model calls with a failing mock. They verify
 login, static assets, state import, health, disabled chat, budget prerequisites and
-request limits. They do not validate a live Render deployment or provider call.
+request limits. Snapshot tests stub the HTTPS download and verify cold-start
+recovery, checksums, archive limits and rejected paths/content. They do not
+validate a live Render deployment or provider call.

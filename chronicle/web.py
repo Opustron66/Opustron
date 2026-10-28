@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from chronicle.guard.egress_logger import get_logger
+from chronicle.guard.state_snapshot import restore_snapshot
 from chronicle.memory import MemoryAPI
 from chronicle.memory.server import router
 
@@ -30,6 +31,9 @@ def create_app() -> FastAPI:
     if not (static / "index.html").is_file():
         raise ValueError("Build the UI with npm run build, or set CHRONICLE_WEB_STATIC_DIR")
     chat = os.environ.get("CHRONICLE_WEB_CHAT_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+    ephemeral = os.environ.get("CHRONICLE_WEB_EPHEMERAL", "0").lower() in {"1", "true", "yes", "on"}
+    if ephemeral and chat:
+        raise ValueError("Paid chat is disabled on ephemeral hosting because spending logs reset on restart")
     limit = int(os.environ.get("CHRONICLE_WEB_ASKS_PER_MINUTE", "6"))
     if limit < 1:
         raise ValueError("CHRONICLE_WEB_ASKS_PER_MINUTE must be positive")
@@ -40,7 +44,12 @@ def create_app() -> FastAPI:
         if not (os.environ.get("NEBIUS_API_KEY") or os.environ.get("OPENAI_API_KEY")):
             raise ValueError("Configure a model API key before enabling chat")
 
-    memory = MemoryAPI.from_state(os.environ.get("CHRONICLE_STATE_DIR", "data/hosted-state"))
+    state = Path(os.environ.get("CHRONICLE_STATE_DIR", "data/hosted-state"))
+    snapshot_url = os.environ.get("CHRONICLE_STATE_SNAPSHOT_URL", "")
+    snapshot_sha = os.environ.get("CHRONICLE_STATE_SNAPSHOT_SHA256", "")
+    if snapshot_url or snapshot_sha:
+        state = restore_snapshot(state, snapshot_url, snapshot_sha)
+    memory = MemoryAPI.from_state(state)
 
     @asynccontextmanager
     async def lifespan(app):
