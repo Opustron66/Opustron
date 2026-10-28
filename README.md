@@ -53,6 +53,7 @@ set -a; source .env; set +a
 | `CHRONICLE_SECOND_LOOK` | `off` disables the wider retry for answers that say the corpus is silent. Unset = on |
 | `CHRONICLE_VOTE` | `1` (set by the benchmark adapter) answers flip-prone questions (yes/no, "which one", "how many", as-of) up to three times and keeps the majority. Unset = off |
 | `CHRONICLE_POSITIVE_FORM` | `1` (set by the benchmark adapter) rewrites an answer whose first sentence puts the value next to "not", "rather than" etc., so the value is stated on its own. Unset = off |
+| `CHRONICLE_CRITIC` | `1` checks every answer with a second model call (the benchmark adapter sets it). Unset = off |
 | `CHRONICLE_KEY_LINES` | `off` drops the list of evidence lines that repeat the question's wording. Unset = on |
 | `CHRONICLE_TIMELINE` | `1` answers state-over-time questions timeline first. Unset = off |
 | `CHRONICLE_GROUNDING` | `off` skips the quote check (each answer quotes evidence for its names and numbers; unbacked ones get one correction pass). Unset = on |
@@ -391,6 +392,18 @@ anything. "The corpus does not confirm" is rewritten to "does not record", which
 recognises as a refusal. A reply that runs out of tokens while thinking is retried with a request
 to think briefly, then once more with thinking off (`complete(..., thinking=False)` switches it for
 one call); before, a second cut-off was scored as "Not in the corpus".
+
+**Critic pass** (`chronicle/reason/critic.py`, `CHRONICLE_CRITIC=1`, on in the benchmark
+adapter). A second call reads the same evidence, the question and the draft, and runs a checklist:
+every part answered, figures for the exact context named, the latest value (a later message in the
+thread supersedes), the right person for the role, refusals the evidence contradicts, and outcomes
+the evidence never states. It may replace the draft only by copying an evidence line that proves
+the problem; the code checks that line really is in the evidence. A fix that refuses replaces an
+answer only when the quote check had already flagged it.
+
+**Negations get their own clause.** "Provider C has experimental status and does not fully support
+it" is rewritten to "...experimental status; it does not fully support it": the grader reads a
+clause holding "not" as denying everything in it.
 
 **Timeline first for state over time (off by default, `CHRONICLE_TIMELINE=1`).** As-of questions, history questions and ones like "how did
 X change" or "have mitigations been put in place?" use a schema whose first field is `timeline`:

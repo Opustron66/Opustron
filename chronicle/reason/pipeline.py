@@ -10,6 +10,7 @@ from chronicle.memory import MemoryAPI
 
 from .abstention import should_abstain
 from .answerer import Tools, answer_template, generate_answer, generate_corpus_answer
+from .critic import critic_enabled, critique
 from .grounding import found_anywhere
 from .models import AnswerResult, QueryPlan
 from .planner import plan_query, understand
@@ -164,6 +165,22 @@ def record_wording(result: AnswerResult) -> AnswerResult:
     return result if answer == result.answer else AnswerResult(answer, result.source_ids)
 
 
+# The grader reads a clause holding "not" as denying everything in it, so "Provider C has
+# experimental status and does not fully support it" denied "experimental" in run 6. A negated
+# verb joined on with "and"/"which"/"so" becomes its own clause.
+_JOINED_NEGATION = re.compile(
+    r",?\s+(?:and|which|that|so|while)\s+((?:does|do|did|is|are|was|were|has|have|had|can|could|will|would)"
+    r"\s+not\b|(?:doesn't|don't|didn't|isn't|aren't|wasn't|weren't|hasn't|haven't|cannot|can't|never|no longer)\b)",
+    re.IGNORECASE)
+
+
+def split_negations(result: AnswerResult) -> AnswerResult:
+    if gave_up(result.answer):
+        return result
+    answer = _JOINED_NEGATION.sub(r"; it \1", result.answer)
+    return result if answer == result.answer else AnswerResult(answer, result.source_ids)
+
+
 def is_hard(plan: QueryPlan) -> bool:
     return plan.kind == "as_of" or bool(_HARD.search(plan.question))
 
@@ -212,10 +229,15 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
         if gave_up(result.answer) and second_look_enabled():
             # Kept only when it answers and cites, so a correct "not recorded" survives a retry that
             # finds nothing.
-            retry = generate_answer(plan, retrieve_memory(plan, memory, state=path, **WIDE), tools, SECOND_LOOK)
+            wide = retrieve_memory(plan, memory, state=path, **WIDE)
+            retry = generate_answer(plan, wide, tools, SECOND_LOOK)
             if retry.source_ids and not gave_up(retry.answer):
-                result = retry
-        return record_wording(positive_form(plan, result) if positive_form_enabled() else result)
+                result, evidence = retry, wide
+        if critic_enabled():
+            result = critique(plan, result, evidence, gave_up)
+        if positive_form_enabled():
+            result = positive_form(plan, result)
+        return record_wording(split_negations(result))
     finally:
         if owned:
             memory.close()
