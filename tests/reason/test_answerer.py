@@ -68,3 +68,28 @@ def test_truncated_reply_is_retried_once_asking_for_brief_reasoning():
     with patch("chronicle.reason.answerer.llm.complete", side_effect=replies) as complete:
         assert generate_answer(QueryPlan("x"), [Evidence("E:one", "Alice")]).answer == "Alice"
     assert complete.call_count == 2 and "reasoning short" in complete.call_args.args[0][-1]["content"]
+
+
+def test_answer_form_rules_are_in_every_prompt():
+    from chronicle.reason.answerer import _messages
+    system = _messages(QueryPlan("Who owns payments?"), [Evidence("E:one", "x")], agentic=False, last=True)[0]["content"]
+    assert "stated positively" in system
+    assert "count every distinct one" in system
+    assert 'The corpus does not record <it>.' in system
+
+
+def test_as_of_questions_ask_for_yes_or_no_first():
+    from datetime import date
+
+    from chronicle.reason.answerer import _messages
+    plan = QueryPlan("As of 2026-05-10, had Beacon reached 50%?", kind="as_of", reference_date=date(2026, 5, 10))
+    user = _messages(plan, [Evidence("E:one", "x")], agentic=False, last=True)[1]["content"]
+    assert user.startswith("Answer as of 2026-05-10.")
+    assert '"Yes." or "No." first' in user
+    plain = _messages(QueryPlan("Who owns payments?"), [Evidence("E:one", "x")], agentic=False, last=True)[1]["content"]
+    assert '"Yes." or "No."' not in plain
+
+
+def test_how_was_questions_get_the_outcome_template():
+    from chronicle.reason.answerer import answer_template
+    assert "does not record" in answer_template(QueryPlan("How was the 30ms token-transit window resolved?"))

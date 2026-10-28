@@ -315,6 +315,14 @@ or not-completed evidence can support a definite answer. These rules are appende
 even when an external benchmark supplies the answer-format contract; they remain
 model instructions, not an independent semantic verifier.
 
+Answer form rules (`ANSWER_FORM`) follow how the benchmark grades: clause by clause,
+crediting a value only where it is asserted. So the answer leads with the value in a
+positive sentence ("Duplicated in each project", not "NOT shared (duplicated)"), gives
+no hedge after an answer it has given, leaves out superseded values unless asked for
+the history, counts every distinct instance for "how many" questions, and words a gap
+as "The corpus does not record ...". As-of yes/no questions answer "Yes." or "No."
+first. Retrieval packs about 10k tokens of evidence (`CHAR_BUDGET` 40,000 characters).
+
 **Live egress log.** In a second terminal, run:
 
 ```bash

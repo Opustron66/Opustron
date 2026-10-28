@@ -39,6 +39,23 @@ EVIDENCE_RULES = """Evidence sufficiency rules (also apply when using a benchmar
 - Missing evidence is not proof of a negative. Cite only documents that support what you actually assert.
 - A definite completion, non-completion or cancellation answer must include the exact supporting evidence document IDs in source_ids."""
 
+# Answers are graded clause by clause: a value is credited only where it is asserted, and a
+# clause holding "not", "no longer", "rather than" or "instead of" denies everything in it.
+# "NOT shared (duplicated)" therefore denies "duplicated", and a hedge added after an answer
+# ("the corpus does not confirm ...") can turn it into a refusal.
+ANSWER_FORM = """How to write the answer:
+- Lead with the answer itself, stated positively in its own sentence. Keep negation words
+  ("not", "no longer", "rather than", "instead of") out of the sentence that gives the value:
+  write "Duplicated in each project", not "NOT shared (duplicated)".
+- When the evidence answers the question, answer it plainly. Do not add caveats such as "the
+  corpus does not confirm ..." to an answer you have given.
+- For the current state, give only the current value. Do not repeat superseded values, earlier
+  plans or old proposals unless the question asks for the history.
+- When the question asks how many, or for each/all items, count every distinct one in the
+  evidence (same name but different date, purpose or owner = distinct) and list them all.
+- When the corpus does not record what was asked, say "The corpus does not record <it>." and
+  describe no outcome."""
+
 def _contract() -> str:
     try:
         from bench.answer_contract import ANSWER_CONTRACT
@@ -103,7 +120,7 @@ class Tools:
 
 _CHAIN = re.compile(r"\bin between\b|more than once", re.IGNORECASE)
 _ORDER = re.compile(r"\bin the order\b|earliest first|\border they happened\b", re.IGNORECASE)
-_OUTCOME = re.compile(r"^\s*(how did|what was the outcome|did)\b", re.IGNORECASE)
+_OUTCOME = re.compile(r"^\s*(how did|how was|what was the outcome|did)\b", re.IGNORECASE)
 _TWO = re.compile(r"\b(two different|are different|is that right)\b", re.IGNORECASE)
 
 
@@ -132,7 +149,10 @@ def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last:
                      "AS-OF DATE are not true as of that date: never report their values as the answer. "
                      "Use them only to say that something had not happened yet, or was not yet decided, "
                      "by the as-of date (and when it happened).\n\n")
-    system = f"{_contract()}\n\n{EVIDENCE_GUIDE}\n\n{EVIDENCE_RULES}"
+    if plan.reference_date:
+        reference += ('For "had X happened by then?" answer "Yes." or "No." first, then the state as of '
+                      "that date and, if it changed later, the date it changed.\n\n")
+    system = f"{_contract()}\n\n{EVIDENCE_GUIDE}\n\n{EVIDENCE_RULES}\n\n{ANSWER_FORM}"
     if template := answer_template(plan):
         system += f"\n\n{template}"
     user = f"{reference}EVIDENCE:\n{context}\n\nQUESTION: {plan.question}"

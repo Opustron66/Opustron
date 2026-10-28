@@ -26,9 +26,10 @@ from .models import Evidence, QueryPlan
 from .planner import lexical_query
 
 DOCS_FILE = "docs.jsonl"
-CLAIM_K, TOPIC_K, ENTITY_K, CHUNK_K = 25, 6, 2, 12
-# About 7k tokens of evidence.
-CHAR_BUDGET = 28_000
+CLAIM_K, TOPIC_K, ENTITY_K, CHUNK_K = 25, 6, 2, 16
+# About 10k tokens of evidence: at 7k, questions that list every instance of something ("how many
+# security reviews") saw only one of them.
+CHAR_BUDGET = 40_000
 _ENTRY = re.compile(r"^- (\d{4}-\d{2}-\d{2}) \[[^\]]+\]: (.*?)(?: \(effective [^)]*\))? \| ")
 
 
