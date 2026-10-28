@@ -375,7 +375,9 @@ right "30% reduction target" into a refusal because the model had not quoted the
 
 **Key lines.** Before the question, the prompt lists up to four evidence lines that repeat one of
 the question's rarer two-word phrases ("smoke fixture", "meeting load"), rarest first, with their
-document ids. Rarity counts documents, not lines. Run 5 answered the cache hit rate "on the smoke
+document ids. Rarity counts documents, not lines. A hyphenated question word also asks for its last
+part with the next word ("cost-reduction target" → "reduction target"), which is how the evidence
+wrote it in an as-of question run 7 refused. Run 5 answered the cache hit rate "on the smoke
 fixture" with figures from a later smoke test, and missed a one-line DM saying a meeting-load fix
 had been agreed. `CHRONICLE_KEY_LINES=off` turns it off.
 
@@ -384,8 +386,10 @@ whoever approved it. Counts are written with their noun ("Two reports."). For as
 later reply that reviews a draft written by the as-of date ("the 30% target is a stretch") counts as
 evidence of what the draft said. Dates, deadlines and statuses are given in the evidence's own words
 first ("Mon EOD", "reserved", "Draft until sign-off"), with words that limit them in time ("for now",
-"not yet"). "What is the status of X" lists every status the evidence states. For who holds a role,
-the best-supported person is named from clear indirect evidence too, and the wider second look
+"not yet"). "What is the status of X" lists every status the evidence states. A chosen metric or method is named as the evidence
+specifies it ("symmetric KL divergence ..."), not only by its category. For who holds a role,
+the best-supported person is named from clear indirect evidence too (both the team and the person
+when the evidence ties the role to both: "the evaluator workstream (Jin Oh)"), and the wider second look
 accepts that evidence for role questions ("Rohan Dasgupta from Beacon"). For the current state,
 changes the people involved agreed to count as put in place; for an as-of date only days after the
 offer, they were still a proposal. "Has X been ...?" questions get the same refusal shape as "did X
