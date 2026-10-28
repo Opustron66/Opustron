@@ -1,25 +1,18 @@
 import React from "react";
+import { fmtDate } from "../services/dates";
 
-const fmt = (iso) =>
-  new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "2-digit",
-    timeZone: "UTC",
-  });
-
-// "payments service · owns: Alice Chen → Bob Nakamura (15 May 26)"
+// "payments service · owns: Alice Chen → Bob Nakamura (15 May 2026)"
 export default function FactChange({ before, after }) {
   const shared = before.subject === after.subject ? "subject" : "object";
   const moved = shared === "subject" ? "object" : "subject";
   return (
     <span className="fact-change">
       <span className="fact-change-slot">
-        {after[shared]} · {after.predicate.replace(/_/g, " ")}:
+        {after[shared]} · {after.predicate.replace(/^attr:/, "").replace(/_/g, " ")}:
       </span>{" "}
       <span className="fact-change-before">{before[moved]}</span> →{" "}
       <span className="fact-change-after">{after[moved]}</span>
-      {after.valid_from && <span className="fact-change-date"> ({fmt(after.valid_from)})</span>}
+      {after.valid_from && <span className="fact-change-date"> ({fmtDate(after.valid_from)})</span>}
     </span>
   );
 }

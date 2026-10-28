@@ -14,7 +14,7 @@ const askQuestion = async (text) => {
 
 test("header shows the as-of day in UTC", () => {
   render(<ChatPanel asOf={asOf} />);
-  expect(screen.getByText("as of 10 May 26")).toBeInTheDocument();
+  expect(screen.getByText("as of 10 May 2026")).toBeInTheDocument();
 });
 
 test("sends the question with the as-of date", async () => {
@@ -86,7 +86,7 @@ test("Why? shows the quotes, the as-of date and the fact the answer replaced", a
 
   await userEvent.click(await screen.findByText("Why?"));
   expect(screen.getByText('"Bob now owns the payments service."')).toBeVisible();
-  expect(screen.getByText("20 May 26")).toBeVisible();
+  expect(screen.getByText("20 May 2026")).toBeVisible();
   expect(screen.getByText("Alice Chen")).toHaveClass("fact-change-before");
   expect(screen.getByText("Bob Nakamura")).toHaveClass("fact-change-after");
 });
@@ -107,4 +107,45 @@ test("an answer with nothing to explain has no Why? panel", async () => {
   await askQuestion("Who owned payments?");
   expect(await screen.findByText("Alice Chen.")).toBeInTheDocument();
   expect(screen.queryByText("Why?")).not.toBeInTheDocument();
+});
+
+test("an empty chat suggests questions, and clicking one asks it", async () => {
+  answerWith({ answer: "Bob Nakamura.", citations: [] });
+  render(<ChatPanel asOf={asOf} />);
+  await userEvent.click(screen.getByRole("button", { name: "Who owned payments in March?" }));
+  expect(await screen.findByText("Bob Nakamura.")).toBeInTheDocument();
+  expect(JSON.parse(fetch.mock.calls[0][1].body).question).toBe("Who owned payments in March?");
+  expect(screen.queryByRole("button", { name: "Who owned payments in March?" })).not.toBeInTheDocument();
+});
+
+test("chats are saved by day and come back after a reload", async () => {
+  answerWith({ answer: "Alice Chen.", citations: [] });
+  const { unmount } = render(<ChatPanel asOf={asOf} />);
+  await askQuestion("Who owned payments?");
+  await screen.findByText("Alice Chen.");
+
+  const stored = JSON.parse(localStorage.getItem("chronicle.chats"));
+  const [day] = Object.keys(stored);
+  expect(day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  expect(stored[day][0].messages.map((m) => m.content)).toEqual(["Who owned payments?", "Alice Chen."]);
+
+  unmount();
+  render(<ChatPanel asOf={asOf} />);
+  expect(screen.getByText("Alice Chen.")).toBeInTheDocument();
+});
+
+test("New chat starts empty, and History reopens the earlier one", async () => {
+  answerWith({ answer: "Alice Chen.", citations: [] });
+  render(<ChatPanel asOf={asOf} />);
+  await askQuestion("Who owned payments?");
+  await screen.findByText("Alice Chen.");
+
+  await userEvent.click(screen.getByRole("button", { name: "New chat" }));
+  expect(screen.queryByText("Alice Chen.")).not.toBeInTheDocument();
+  expect(screen.getByText("What would you like to remember?")).toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: /History/ }));
+  expect(screen.getByText("Today")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /Who owned payments\?/ }));
+  expect(screen.getByText("Alice Chen.")).toBeInTheDocument();
 });

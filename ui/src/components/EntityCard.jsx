@@ -1,13 +1,11 @@
 import React, { useState } from "react";
-import CitationPopover from "./CitationPopover";
 import { factsAbout, hasEndedBy, isTrueAt } from "../services/api";
+import { fmtDate } from "../services/dates";
+import { describeStatusAt, describeValidity, humanizeFact } from "../services/humanize";
 
-const fmt = (d, missing) =>
-  d
-    ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })
-    : missing;
+const fmt = (d, missing) => (d ? fmtDate(d) : missing);
 
-const words = (predicate) => predicate.replaceAll("_", " ");
+const words = (predicate) => predicate.replace(/^attr:/, "").replaceAll("_", " ");
 
 // "Alice owns payments" reads as "owns: payments" on Alice's card and
 // "who owns: Alice" on the payments card.
@@ -18,7 +16,7 @@ function groupFor(entityName, fact) {
 }
 
 export default function EntityCard({ entity, allFacts, asOf }) {
-  const [openCitation, setOpenCitation] = useState(null);
+  const [open, setOpen] = useState(null);
 
   const groups = {};
   factsAbout(allFacts, entity.name).forEach((f) => {
@@ -45,30 +43,35 @@ export default function EntityCard({ entity, allFacts, asOf }) {
                 {sorted.map(({ fact: f, other }) => {
                   const isCurrent = isTrueAt(f, asOf);
                   const isSuperseded = hasEndedBy(f, asOf);
+                  const expanded = open === f.fact_id;
+                  const explainId = `explain-${f.fact_id}`;
 
                   return (
                     <div
                       key={f.fact_id}
                       className={`fact-row ${isCurrent ? "fact-current" : ""} ${isSuperseded ? "fact-superseded" : ""}`}
                     >
-                      <span className="fact-object">{other}</span>
-                      <span className="fact-validity">
-                        {fmt(f.valid_from, "unknown")} → {fmt(f.valid_to, "now")}
-                      </span>
                       <button
-                        className="citation-btn"
-                        onClick={() =>
-                          setOpenCitation(openCitation === f.fact_id ? null : f.fact_id)
-                        }
-                        aria-label={`Source: ${f.doc_id}`}
+                        type="button"
+                        className="fact-toggle"
+                        aria-expanded={expanded}
+                        aria-controls={explainId}
+                        title="What does this mean?"
+                        onClick={() => setOpen(expanded ? null : f.fact_id)}
                       >
-                        {f.doc_id}
+                        <span className="fact-object">{other}</span>
+                        <span className="fact-validity">
+                          {fmt(f.valid_from, "unknown")} → {fmt(f.valid_to, "now")}
+                        </span>
+                        <span className="fact-chevron" aria-hidden="true">{expanded ? "−" : "+"}</span>
                       </button>
-                      {openCitation === f.fact_id && (
-                        <CitationPopover
-                          source={{ uri: f.doc_id, quote: f.quote }}
-                          onClose={() => setOpenCitation(null)}
-                        />
+                      {expanded && (
+                        <div className="fact-explain" id={explainId}>
+                          <p>{humanizeFact(f)}</p>
+                          <p className="fact-explain-dates">
+                            {describeValidity(f)} {describeStatusAt(f, asOf)}
+                          </p>
+                        </div>
                       )}
                     </div>
                   );

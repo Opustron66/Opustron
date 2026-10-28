@@ -7,6 +7,8 @@ Element.prototype.scrollIntoView = vi.fn();
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
+  delete document.documentElement.dataset.theme;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
