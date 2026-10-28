@@ -3,9 +3,23 @@
   "description": "Chronicle P3: shared P1 ingestion, P2 temporal retrieval and privacy-routed answers, using the same reasoning pipeline as UI chat.",
   "model": "nvidia/Nemotron-3_5-Lightning",
   "accounting": "proxy",
-  "ingest": ["python", "-m", "chronicle.ingest", "--corpus", "{corpus}", "--state", "{state}"],
-  "answer": ["python", "${CHRONICLE_ROOT}/adapters/chronicle/answer.py", "--state", "{state}"],
+  "ingest": [
+    "python",
+    "-m",
+    "chronicle.ingest",
+    "--corpus",
+    "{corpus}",
+    "--state",
+    "{state}"
+  ],
+  "answer": [
+    "python",
+    "${CHRONICLE_ROOT}/adapters/chronicle/answer.py",
+    "--state",
+    "{state}"
+  ],
   "env": {
-    "CHRONICLE_ROOT": "/Users/sara/Desktop/Opustron-fullrun"
+    "CHRONICLE_ROOT": "/Users/sara/Desktop/Opustron-fullrun",
+    "CHRONICLE_VOTE": "1"
   }
 }

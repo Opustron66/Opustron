@@ -223,16 +223,17 @@ BRIEF = ("Keep your reasoning short: a few sentences at most. The answer must be
          "JSON object.")
 
 
-def _complete(messages: list[dict], schema: dict):
+def _complete(messages: list[dict], schema: dict, temperature: float = 0.0):
     """One model call; a reply cut off by the token limit (a reasoning model thinking too long)
     is retried once with a request to think briefly."""
+    kwargs = {"schema": schema, **({"temperature": temperature} if temperature else {})}
     try:
-        return llm.complete(messages, schema=schema)
+        return llm.complete(messages, **kwargs)
     except ValueError as exc:
         if "truncated reply" not in str(exc):
             raise
         retry = [*messages[:-1], {**messages[-1], "content": messages[-1]["content"] + "\n\n" + BRIEF}]
-        return llm.complete(retry, schema=schema)
+        return llm.complete(retry, **kwargs)
 
 
 def _key(e: Evidence) -> tuple:
@@ -246,18 +247,19 @@ def _str_list(value, limit: int = 3) -> list[str]:
 
 
 def generate_answer(plan: QueryPlan, evidence: list[Evidence], tools: Tools | None = None,
-                    hint: str = "") -> AnswerResult:
+                    hint: str = "", temperature: float = 0.0) -> AnswerResult:
     if not evidence:
         return AnswerResult("Not in the corpus", [])
     evidence = list(evidence)
     if tools is None:
-        parsed = _complete(_messages(plan, evidence, agentic=False, last=True, hint=hint), ANSWER_SCHEMA)
+        parsed = _complete(_messages(plan, evidence, agentic=False, last=True, hint=hint), ANSWER_SCHEMA,
+                           temperature)
     else:
         note = ""
         for round_number in range(1, MAX_ROUNDS + 1):
             last = round_number == MAX_ROUNDS
             parsed = _complete(_messages(plan, evidence, agentic=True, last=last, note=note, hint=hint),
-                               AGENT_SCHEMA)
+                               AGENT_SCHEMA, temperature)
             if not isinstance(parsed, dict):
                 raise ValueError("LLM returned no JSON object")
             action = parsed.get("action")

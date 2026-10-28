@@ -51,6 +51,7 @@ set -a; source .env; set +a
 | `CHRONICLE_REDACT_RECALL` | Hermes plugin: `0` stops masking emails/phones/IDs in recalled memory |
 | `CHRONICLE_REDACT_NAMES` | Benchmark runs only: `off` stops pseudonymising names, organisations and places (emails/phones/IDs stay masked); `person` masks people only, leaving organisations and places. Unset = on |
 | `CHRONICLE_SECOND_LOOK` | `off` disables the wider retry for answers that say the corpus is silent. Unset = on |
+| `CHRONICLE_VOTE` | `1` (set by the benchmark adapter) answers flip-prone questions (yes/no, "which one", "how many", as-of) up to three times and keeps the majority. Unset = off |
 | `CHRONICLE_FULL_CORPUS` | `1` answers every question over the whole corpus (all documents, oldest first) instead of retrieved evidence; for corpora that fit the model context. Unset = off |
 
 ## Calling a model: always use `chronicle.guard.llm`
@@ -332,6 +333,11 @@ date ("from 30d to 14d") may supply the old value. Retrieval packs about 10k tok
 retrieved again with about 25k tokens of evidence (`WIDE` in `retriever.py`) and answered once
 more. The retry replaces the first answer only if it answers and cites a document, so a correct
 "not recorded" stands when the wider search finds nothing. `CHRONICLE_SECOND_LOOK=off` disables it.
+
+**Voting on hard questions.** Between identical benchmark runs the answers that flipped were mostly
+yes/no, "which one", "how many" and as-of questions (6 of 15 disambiguation questions on corpus A).
+With `CHRONICLE_VOTE=1` those are answered a second time at temperature 0.6; if the two agree the
+first stands, otherwise a third answer decides. About 32 of corpus A's 186 questions qualify.
 
 **Whole-corpus answering (experiment).** `CHRONICLE_FULL_CORPUS=1` skips retrieval and gives the
 model every document, oldest first, in one prompt (corpus A is about 120k tokens; Nemotron Ultra
