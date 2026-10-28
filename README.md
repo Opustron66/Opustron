@@ -349,6 +349,14 @@ shared."). A rewrite that still leads with a negation, gives up, or grows too lo
 run 4's answers it fires on 5 of 186. Answers must also use only figures stated for the exact
 context a question names ("on the smoke fixture").
 
+**Relative dates are computed, not guessed.** Documents shown to the model carry the weekday they
+were written ("written Wednesday 2026-05-20") and the calendar date after each relative day
+(`chronicle/reason/dates.py`): "by Mon EOD" becomes "by Mon [2026-05-25] EOD", "next Wed" the
+Wednesday of the following week, "tonight"/"tomorrow" their dates. A bare weekday could be past or
+coming, so it shows both ("Tue [2026-05-19 or 2026-05-26]") and the model picks by tense. Explicit
+dates ("Wed, 20 May", "Fri the 29th") are left alone. Only the prompt text changes; stored memory
+does not. The model had answered one deadline as 23, 24 and 25 May in different runs.
+
 **Whole-corpus answering (experiment).** `CHRONICLE_FULL_CORPUS=1` skips retrieval and gives the
 model every document, oldest first, in one prompt (corpus A is about 120k tokens; Nemotron Ultra
 takes 1M). The system prompt and the corpus come before anything question-specific, so the

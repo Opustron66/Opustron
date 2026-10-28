@@ -7,9 +7,11 @@ the last round must answer. Without tools it answers in one call.
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 
 from chronicle.guard import llm
 
+from .dates import annotate_dates
 from .models import AnswerResult, Evidence, QueryPlan
 
 ANSWER_SCHEMA = {
@@ -87,7 +89,18 @@ EVIDENCE_GUIDE = """How to read the evidence:
 - FACT lines give a fact's validity interval (valid FROM -> TO; "now" = still true) and the date
   it was stated.
 - DOCUMENT blocks are raw source text; prefer them when they disagree with a FACT or TOPIC.
+  Relative days in them carry the computed date in brackets ("by Mon [2026-05-25]"); a bare
+  weekday shows the previous and the coming one ("Tue [2026-05-19 or 2026-05-26]"): pick by tense.
+  Use these dates rather than counting days yourself.
 - Cite the document ids (the [...] ids) that support your answer."""
+
+
+def _written(day: str) -> str:
+    """ "Wednesday 2026-05-20": the weekday too, so "by Mon" can be checked against it."""
+    try:
+        return f"{date.fromisoformat(day[:10]):%A} {day}"
+    except ValueError:
+        return day
 
 
 def _render(e: Evidence) -> str:
@@ -96,9 +109,10 @@ def _render(e: Evidence) -> str:
     if e.kind == "entity":
         return f"PERSON PAGE\n{e.text}"
     if e.kind == "chunk":
-        return f"DOCUMENT [{e.doc_id}] written {e.date}\n{e.text}"
+        return f"DOCUMENT [{e.doc_id}] written {_written(e.date)}\n{annotate_dates(e.text, e.date)}"
     if e.kind == "later":
-        return f"WRITTEN AFTER THE AS-OF DATE [{e.doc_id}] written {e.date}\n{e.text}"
+        return (f"WRITTEN AFTER THE AS-OF DATE [{e.doc_id}] written {_written(e.date)}\n"
+                f"{annotate_dates(e.text, e.date)}")
     return e.text
 
 
@@ -184,8 +198,9 @@ def _messages(plan: QueryPlan, evidence: list[Evidence], *, agentic: bool, last:
 
 
 CORPUS_GUIDE = """The user message starts with the whole corpus: every DOCUMENT, oldest first, each with
-its id and the date it was written. A later document may supersede an earlier one. Cite the
-document ids that support your answer."""
+its id and the date it was written. A later document may supersede an earlier one. Relative days
+carry the computed date in brackets ("by Mon [2026-05-25]"); use them rather than counting days.
+Cite the document ids that support your answer."""
 
 
 def corpus_messages(plan: QueryPlan, corpus: list[Evidence]) -> list[dict]:
