@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 
 from chronicle.guard import llm
+from chronicle.guard.pii_detector import names_redacted
 from chronicle.memory import MemoryAPI
 
 from .abstention import should_abstain
@@ -14,6 +15,7 @@ from .answerer import Tools, answer_template, generate_answer, generate_corpus_a
 from .critic import critic_enabled, critique
 from .grounding import claims, found_anywhere, norm
 from .models import AnswerResult, QueryPlan
+from .names import expand, full_names, known_people, load_people
 from .planner import plan_query, understand
 from .retriever import (
     WIDE,
@@ -205,7 +207,7 @@ def split_negations(result: AnswerResult) -> AnswerResult:
     if gave_up(result.answer):
         return result
     answer = _JOINED_NEGATION.sub(r"; it \1", result.answer)
-    return result if answer == result.answer else AnswerResult(answer, result.source_ids)
+    return result if answer == result.answer else replace(result, answer=answer)
 
 
 def is_hard(plan: QueryPlan) -> bool:
@@ -281,11 +283,19 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
             if path is None and memory.database.path != ":memory:":
                 path = Path(memory.database.path).parent
             return generate_corpus_answer(plan, corpus_evidence(path))
+        state_dir = path or (None if memory.database.path == ":memory:" else Path(memory.database.path).parent)
+        people = load_people(state_dir)
         evidence = retrieve_memory(plan, memory, state=path)
         if should_abstain(evidence):
             return AnswerResult("Not in the corpus", [])
-        tools = Tools(search=lambda queries: search_more(plan, memory, queries, path),
-                      open=lambda doc_ids: open_documents(plan, memory, doc_ids, path)) if agentic_enabled() else None
+        # With names masked, "Rohan" and "Rohan Dasgupta" would reach the model as two stand-ins and
+        # the evidence tying him to Beacon would be split between them; written in full, they share one.
+        first_names = known_people(people, []) if names_redacted() else {}
+        whole = (lambda items: [replace(e, text=expand(e.text, first_names)) for e in items]
+                 ) if first_names else (lambda items: items)
+        evidence = whole(evidence)
+        tools = Tools(search=lambda queries: whole(search_more(plan, memory, queries, path)),
+                      open=lambda doc_ids: whole(open_documents(plan, memory, doc_ids, path))) if agentic_enabled() else None
         result = generate_answer(plan, evidence, tools)
         if vote_enabled() and is_hard(plan):
             result = vote(result, lambda t: generate_answer(plan, evidence, tools, temperature=t), plan.question)
@@ -295,7 +305,7 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
         if gave_up(result.answer) and second_look_enabled():
             # Kept only when it answers and cites, so a correct "not recorded" survives a retry that
             # finds nothing.
-            wide = retrieve_memory(plan, memory, state=path, **WIDE)
+            wide = whole(retrieve_memory(plan, memory, state=path, **WIDE))
             retry = generate_answer(plan, wide, tools,
                                     SECOND_LOOK_ROLE if _ROLE_Q.search(plan.question) else SECOND_LOOK)
             if retry.source_ids and not gave_up(retry.answer):
@@ -309,6 +319,10 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
         if positive_form_enabled():
             result = positive_form(plan, result)
         result = record_wording(split_negations(result))
+        if not gave_up(result.answer):
+            named = full_names(result.answer, people, [e.text for e in evidence])
+            if named != result.answer:
+                result = replace(result, answer=named)
         return replace(result, as_of=plan.reference_date if plan.kind == "as_of" else None)
     finally:
         if owned:
