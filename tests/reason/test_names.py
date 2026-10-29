@@ -50,6 +50,7 @@ def test_with_names_masked_the_evidence_is_written_in_full_before_answering(stat
 
     def fake_answer(plan, evidence, tools=None, hint="", temperature=0.0):
         seen.extend(e.text for e in evidence)
+        seen.append(plan.question)
         return AnswerResult("Rohan.", ["S:1"])
 
     monkeypatch.setattr(pipeline, "MemoryAPI", Memory)
@@ -58,6 +59,6 @@ def test_with_names_masked_the_evidence_is_written_in_full_before_answering(stat
     monkeypatch.setattr(pipeline, "understand", lambda plan: plan)
     monkeypatch.setenv("CHRONICLE_AGENTIC", "0")
     monkeypatch.setenv("CHRONICLE_GROUNDING", "0")
-    result = pipeline.answer_question("Who leads Project Beacon?", Memory())
-    assert seen == ["Rohan Dasgupta from Beacon; Rohan Dasgupta's team"]
+    result = pipeline.answer_question("Does Rohan lead Project Beacon?", Memory())
+    assert seen == ["Rohan Dasgupta from Beacon; Rohan Dasgupta's team", "Does Rohan Dasgupta lead Project Beacon?"]
     assert result.answer == "Rohan Dasgupta."
