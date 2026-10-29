@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import Timeline from "./Timeline";
 import { MOCK } from "../services/api";
@@ -10,38 +11,55 @@ const renderTimeline = (props = {}) =>
       endDate={MOCK.corpusEnd}
       value={new Date("2026-05-10")}
       onChange={() => {}}
-      facts={MOCK.facts}
       {...props}
     />
   );
 
-test("shows the selected day and the corpus bounds in UTC", () => {
+test("shows the selected day and the corpus bounds in UTC, with full years", () => {
   renderTimeline();
-  expect(screen.getByText("10 May 26")).toBeInTheDocument();
-  expect(screen.getByText("16 Apr 26")).toBeInTheDocument();
-  expect(screen.getByText("27 May 26")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /10 May 2026/ })).toBeInTheDocument();
+  expect(screen.getByText("16 Apr 2026")).toBeInTheDocument();
+  expect(screen.getByText("27 May 2026")).toBeInTheDocument();
 });
 
-test("moving the slider reports the matching date", () => {
+test("the slider snaps to month and mid-month stops", () => {
   const onChange = vi.fn();
   renderTimeline({ onChange });
-  fireEvent.change(screen.getByLabelText("Select date in memory"), { target: { value: "29" } });
-  expect(onChange).toHaveBeenCalledWith(new Date("2026-05-15"));
+  const slider = screen.getByLabelText("Select date in memory");
+  expect(slider).toHaveAttribute("max", "3"); // 16 Apr, 1 May, 15 May, 27 May
+  fireEvent.change(slider, { target: { value: "1" } });
+  expect(onChange).toHaveBeenCalledWith(new Date("2026-05-01"));
 });
 
-const activeTitles = (container) =>
-  [...container.querySelectorAll(".timeline-fact-bar.active")].map((el) => el.title);
-
-test("highlights only the facts true on the selected day", () => {
-  const { container } = renderTimeline({ value: new Date("2026-05-20") });
-  const active = activeTitles(container);
-  expect(active).toHaveLength(2);
-  expect(active.join()).toContain("Bob Nakamura — owns: payments service");
-  expect(active.join()).not.toContain("Alice Chen — owns");
+test("clicking the date lets you type an exact day", async () => {
+  const onChange = vi.fn();
+  renderTimeline({ onChange });
+  await userEvent.click(screen.getByRole("button", { name: /10 May 2026/ }));
+  const field = screen.getByLabelText("Type a date");
+  await userEvent.clear(field);
+  await userEvent.type(field, "12 May 2026{Enter}");
+  expect(onChange).toHaveBeenCalledWith(new Date("2026-05-12"));
 });
 
-test("on the handover day only the new owner's bar is active", () => {
-  const { container } = renderTimeline({ value: new Date("2026-05-15") });
-  const owners = activeTitles(container).filter((t) => t.includes("owns: payments service"));
-  expect(owners).toEqual([expect.stringContaining("Bob Nakamura")]);
+test("a typed day outside the corpus is clamped, and nonsense is rejected", async () => {
+  const onChange = vi.fn();
+  renderTimeline({ onChange });
+  await userEvent.click(screen.getByRole("button", { name: /10 May 2026/ }));
+  const field = screen.getByLabelText("Type a date");
+  await userEvent.clear(field);
+  await userEvent.type(field, "soon{Enter}");
+  expect(field).toHaveAttribute("aria-invalid", "true");
+  expect(onChange).not.toHaveBeenCalled();
+  await userEvent.clear(field);
+  await userEvent.type(field, "2030-01-01{Enter}");
+  expect(onChange).toHaveBeenCalledWith(new Date("2026-05-27"));
+});
+
+test("Escape leaves the date unchanged", async () => {
+  const onChange = vi.fn();
+  renderTimeline({ onChange });
+  await userEvent.click(screen.getByRole("button", { name: /10 May 2026/ }));
+  await userEvent.type(screen.getByLabelText("Type a date"), "{Escape}");
+  expect(onChange).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: /10 May 2026/ })).toBeInTheDocument();
 });

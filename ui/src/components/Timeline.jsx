@@ -1,85 +1,101 @@
-import React, { useMemo } from "react";
-import { isTrueAt } from "../services/api";
+import React, { useMemo, useRef, useState } from "react";
+import { clampDate, fmtDate, isoDay, parseDay, snapStops } from "../services/dates";
 
-const fmt = (d) =>
-  d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit", timeZone: "UTC" });
+function DateField({ value, min, max, onChange }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState("");
+  const [error, setError] = useState(false);
+  const cancelled = useRef(false);
 
-export default function Timeline({ startDate, endDate, value, onChange, facts = [] }) {
-  const totalDays = Math.round((endDate - startDate) / 86400000);
-  const currentDay = Math.round((value - startDate) / 86400000);
-  const pct = totalDays > 0 ? (currentDay / totalDays) * 100 : 0;
-
-  // Build tick marks at key fact boundaries
-  const ticks = useMemo(() => {
-    const dates = new Set();
-    facts.forEach((f) => {
-      if (f.valid_from) dates.add(f.valid_from.slice(0, 10));
-      if (f.valid_to) dates.add(f.valid_to.slice(0, 10));
-    });
-    return [...dates]
-      .map((d) => new Date(d))
-      .filter((d) => d >= startDate && d <= endDate)
-      .map((d) => ({
-        date: d,
-        pct: ((d - startDate) / (endDate - startDate)) * 100,
-        label: fmt(d),
-      }));
-  }, [facts, startDate, endDate]);
-
-  const handleChange = (e) => {
-    const days = Number(e.target.value);
-    const date = new Date(startDate.getTime() + days * 86400000);
-    onChange(date);
+  const open = () => {
+    cancelled.current = false;
+    setText(isoDay(value));
+    setError(false);
+    setEditing(true);
   };
+  const commit = () => {
+    const d = parseDay(text);
+    if (!d) return setError(true);
+    onChange(clampDate(d, min, max));
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <button type="button" className="timeline-date" onClick={open} title="Click to type an exact date">
+        {fmtDate(value)}
+        <svg className="timeline-date-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M11.5 2.5l2 2L6 12H4v-2z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+        </svg>
+      </button>
+    );
+  }
+  return (
+    <span className="timeline-date-edit">
+      {error && <span className="timeline-date-error" role="alert">Try a date like 2026-05-12 or 12 May 2026</span>}
+      <input
+        onFocus={(e) => e.target.select()}
+        className={`timeline-date-input${error ? " invalid" : ""}`}
+        aria-label="Type a date"
+        aria-invalid={error}
+        autoFocus
+        value={text}
+        placeholder="YYYY-MM-DD"
+        onChange={(e) => {
+          setText(e.target.value);
+          setError(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") {
+            cancelled.current = true;
+            setEditing(false);
+          }
+        }}
+        onBlur={() => {
+          const d = !cancelled.current && parseDay(text);
+          if (d) onChange(clampDate(d, min, max));
+          setEditing(false);
+        }}
+      />
+    </span>
+  );
+}
+
+export default function Timeline({ startDate, endDate, value, onChange }) {
+  const stops = useMemo(() => snapStops(startDate, endDate), [startDate, endDate]);
+  const span = endDate - startDate;
+  const pct = span > 0 ? ((value - startDate) / span) * 100 : 0;
+  let index = 0;
+  stops.forEach((s, i) => {
+    if (Math.abs(s - value) < Math.abs(stops[index] - value)) index = i;
+  });
 
   return (
     <div className="timeline-wrap">
       <div className="timeline-header">
         <span className="timeline-label">Memory Time Machine</span>
-        <span className="timeline-date">{fmt(value)}</span>
+        <DateField value={value} min={startDate} max={endDate} onChange={onChange} />
       </div>
 
       <div className="timeline-track-wrap">
-        <span className="timeline-bound">{fmt(startDate)}</span>
+        <span className="timeline-bound">{fmtDate(startDate)}</span>
         <div className="timeline-track">
-          <div className="timeline-fill" style={{ width: `${pct}%` }} />
-          {ticks.map((t) => (
-            <div
-              key={t.label}
-              className="timeline-tick"
-              style={{ left: `${t.pct}%` }}
-              title={t.label}
-            />
-          ))}
+          <div className="timeline-fill" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+          <div className="timeline-thumb" style={{ left: `${Math.min(100, Math.max(0, pct))}%` }} />
           <input
             type="range"
             min={0}
-            max={totalDays}
-            value={currentDay}
-            onChange={handleChange}
+            max={stops.length - 1}
+            step={1}
+            value={index}
+            onChange={(e) => onChange(stops[Number(e.target.value)])}
             className="timeline-slider"
             aria-label="Select date in memory"
+            aria-valuetext={fmtDate(value)}
           />
         </div>
-        <span className="timeline-bound">{fmt(endDate)}</span>
-      </div>
-
-      <div className="timeline-facts">
-        {facts.map((f) => {
-          const from = f.valid_from ? new Date(f.valid_from) : startDate;
-          const to = f.valid_to ? new Date(f.valid_to) : endDate;
-          const isActive = isTrueAt(f, value);
-          const fromPct = Math.max(0, ((from - startDate) / (endDate - startDate)) * 100);
-          const toPct = Math.min(100, ((to - startDate) / (endDate - startDate)) * 100);
-          return (
-            <div
-              key={f.fact_id}
-              className={`timeline-fact-bar ${isActive ? "active" : "inactive"}`}
-              style={{ left: `${fromPct}%`, width: `${toPct - fromPct}%` }}
-              title={`${f.subject} — ${f.predicate}: ${f.object} (${f.valid_from} → ${f.valid_to ?? "now"})`}
-            />
-          );
-        })}
+        <span className="timeline-bound">{fmtDate(endDate)}</span>
       </div>
     </div>
   );

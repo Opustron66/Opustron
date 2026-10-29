@@ -1,5 +1,4 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { expect, test } from "vitest";
 import DateDiff from "./DateDiff";
 import { MOCK, diffFacts } from "../services/api";
@@ -13,22 +12,28 @@ test("diffFacts pairs a handover as a change, not an add and an end", () => {
   expect(ended.map((f) => f.fact_id)).toEqual(["f4"]); // Bob's on-call ended 6 May
 });
 
-test("shows what changed and ended between the two dates", async () => {
-  render(<DateDiff {...props} asOf={new Date("2026-05-01")} />);
-  await userEvent.click(screen.getByText("Compare two dates"));
+test("is always visible and shows in plain English what changed and ended between the two dates", async () => {
+  render(<DateDiff {...props} asOf={new Date("2026-05-27")} />);
+  fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-05-01" } });
 
   expect(screen.getByRole("heading", { name: /Changed/ })).toBeVisible();
   expect(screen.getByText("Alice Chen")).toHaveClass("fact-change-before");
   expect(screen.getByText("Bob Nakamura")).toHaveClass("fact-change-after");
-  expect(screen.getByText("Bob Nakamura · on call for: deploy pipeline")).toBeVisible();
+  expect(screen.getByText(/Until 15 May 2026: Alice Chen owns payments service\. From then on: Bob Nakamura owns/)).toBeVisible();
+  expect(screen.getByText("Bob Nakamura is on call for deploy pipeline.")).toBeVisible();
   expect(screen.queryByRole("heading", { name: /Added/ })).not.toBeInTheDocument();
   // Alice leads the deploy pipeline on both dates: not a difference.
   expect(screen.queryByText(/leads: deploy pipeline/)).not.toBeInTheDocument();
 });
 
 test("says so when nothing changed", async () => {
+  render(<DateDiff {...props} asOf={new Date("2026-05-21")} />);
+  fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-05-20" } });
+  expect(screen.getByText("Nothing changed between 20 May 2026 and 21 May 2026.")).toBeVisible();
+});
+
+test("opens on the month leading up to the selected day", () => {
   render(<DateDiff {...props} asOf={new Date("2026-05-20")} />);
-  await userEvent.click(screen.getByText("Compare two dates"));
-  fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-05-21" } });
-  expect(screen.getByText("Nothing changed between these dates.")).toBeVisible();
+  expect(screen.getByLabelText("From")).toHaveValue("2026-04-20");
+  expect(screen.getByLabelText("To")).toHaveValue("2026-05-20");
 });
