@@ -2,7 +2,7 @@ const BASE = "/api";
 
 async function get(path) {
   const res = await fetch(`${BASE}${path}`);
-  if (!res.ok) throw new Error(`${res.status} ${path}`);
+  if (!res.ok) throw Object.assign(new Error(`${res.status} ${path}`), { status: res.status });
   return res.json();
 }
 
@@ -12,7 +12,7 @@ async function post(path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${res.status} ${path}`);
+  if (!res.ok) throw Object.assign(new Error(`${res.status} ${path}`), { status: res.status });
   return res.json();
 }
 

@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from chronicle.guard.egress_logger import get_logger
+from chronicle.guard import remote_budget
 from chronicle.guard.state_snapshot import restore_snapshot
 from chronicle.memory import MemoryAPI
 from chronicle.memory.server import router
@@ -26,7 +27,7 @@ def create_app() -> FastAPI:
         raise ValueError("Build the UI with npm run build, or set CHRONICLE_WEB_STATIC_DIR")
     chat = os.environ.get("CHRONICLE_WEB_CHAT_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
     ephemeral = os.environ.get("CHRONICLE_WEB_EPHEMERAL", "0").lower() in {"1", "true", "yes", "on"}
-    if ephemeral and chat:
+    if ephemeral and chat and not remote_budget.enabled():
         raise ValueError("Paid chat is disabled on ephemeral hosting because spending logs reset on restart")
     limit = int(os.environ.get("CHRONICLE_WEB_ASKS_PER_MINUTE", "6"))
     if limit < 1:
@@ -37,6 +38,8 @@ def create_app() -> FastAPI:
             raise ValueError("Set a positive CHRONICLE_SPEND_LIMIT_USD before enabling chat")
         if not (os.environ.get("NEBIUS_API_KEY") or os.environ.get("OPENAI_API_KEY")):
             raise ValueError("Configure a model API key before enabling chat")
+        if remote_budget.enabled():
+            remote_budget.RemoteBudget().status()
 
     state = Path(os.environ.get("CHRONICLE_STATE_DIR", "data/hosted-state"))
     snapshot_url = os.environ.get("CHRONICLE_STATE_SNAPSHOT_URL", "")
