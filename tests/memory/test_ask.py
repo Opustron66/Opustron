@@ -22,12 +22,16 @@ def memory():
         yield memory
 
 
-@pytest.mark.parametrize(("question", "day", "owner", "source"), [
-    ("Who owned billing on June 9?", "2026-06-20", "Maya Patel", "DEMO:original"),
-    ("Who owns billing?", "2026-06-09", "Maya Patel", "DEMO:original"),
-    ("Who owns billing?", "2026-06-10", "Noah Williams", "DEMO:handover"),
+QUOTES = {"DEMO:original": "Maya Patel owns the billing service.",
+          "DEMO:handover": "Noah Williams takes over billing from Maya Patel."}
+
+
+@pytest.mark.parametrize(("question", "day", "owner", "source", "as_of"), [
+    ("Who owned billing on June 9?", "2026-06-20", "Maya Patel", "DEMO:original", "2026-06-09"),
+    ("Who owns billing?", "2026-06-09", "Maya Patel", "DEMO:original", "2026-06-09"),
+    ("Who owns billing?", "2026-06-10", "Noah Williams", "DEMO:handover", "2026-06-10"),
 ])
-def test_ask_filters_evidence_and_returns_real_citations(memory, question, day, owner, source):
+def test_ask_filters_evidence_and_returns_real_citations(memory, question, day, owner, source, as_of):
     def complete(messages, schema):
         prompt = messages[1]["content"]
         assert f'): {owner} owns' in prompt
@@ -35,19 +39,24 @@ def test_ask_filters_evidence_and_returns_real_citations(memory, question, day, 
         assert f'): {other} owns' not in prompt
         assert "Answer as of 2026-06-" in prompt
         return {"answer": owner, "source_ids": [source, "invented", source],
-                "support": [{"quote": f"{owner} owns billing service"}]}
+                "support": [{"doc_id": source, "quote": QUOTES[source]},
+                            {"doc_id": "invented", "quote": f"{owner} was named billing owner by the board"}]}
 
     with patch("chronicle.reason.answerer.llm.complete", side_effect=complete) as model:
         response = TestClient(create_app(memory)).post("/api/ask", json={"question": question, "as_of": day})
     assert response.status_code == 200
-    assert response.json() == {"answer": owner, "source_ids": [source], "citations": [{"doc_id": source}]}
+    # Only quotes that occur in the evidence reach the "Why?" panel.
+    assert response.json() == {"answer": owner, "source_ids": [source], "citations": [{"doc_id": source}],
+                               "support": [{"doc_id": source, "quote": QUOTES[source]}],
+                               "as_of": as_of, "refused": False}
     model.assert_called_once()
 
 
 def test_unknown_question_abstains_without_model(memory):
     with patch("chronicle.reason.answerer.llm.complete") as model:
         response = TestClient(create_app(memory)).post("/api/ask", json={"question": "cafeteria menu"})
-    assert response.json() == {"answer": "Not in the corpus", "source_ids": [], "citations": []}
+    assert response.json() == {"answer": "Not in the corpus", "source_ids": [], "citations": [],
+                               "support": [], "as_of": None, "refused": True}
     model.assert_not_called()
 
 

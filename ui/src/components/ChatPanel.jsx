@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
-import { ask } from "../services/api";
+import { ask, replacedFacts } from "../services/api";
+import FactChange from "./FactChange";
 
 const fmt = (d) =>
   new Date(d).toLocaleDateString("en-GB", {
@@ -19,7 +20,41 @@ function renderInline(text) {
   ));
 }
 
-export default function ChatPanel({ asOf }) {
+// The evidence behind an answer: verified quotes, the as-of date and any fact it replaced.
+function WhyPanel({ message, facts }) {
+  const replaced = replacedFacts(facts, (message.citations || []).map((c) => c.doc_id));
+  if (!message.support?.length && !message.asOf && !replaced.length) return null;
+  return (
+    <details className="chat-why">
+      <summary>Why?</summary>
+      {message.asOf && (
+        <p className="why-asof">
+          Answered as of <strong>{fmt(message.asOf)}</strong>: only facts known by then were used.
+        </p>
+      )}
+      {message.support?.length > 0 && (
+        <ul className="why-quotes">
+          {message.support.map((s, i) => (
+            <li key={i}>
+              <blockquote className="citation-quote">"{s.quote}"</blockquote>
+              {s.doc_id && <span className="citation-chip">{s.doc_id}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {replaced.length > 0 && (
+        <div className="why-replaced">
+          <span className="why-label">Replaced</span>
+          {replaced.map(({ before, after }) => (
+            <FactChange key={before.fact_id} before={before} after={after} />
+          ))}
+        </div>
+      )}
+    </details>
+  );
+}
+
+export default function ChatPanel({ asOf, facts = [] }) {
   const [messages, setMessages] = useState([
     {
       role: "assistant",
@@ -64,6 +99,9 @@ export default function ChatPanel({ asOf }) {
           role: "assistant",
           content: data.answer,
           citations: data.citations,
+          support: data.support,
+          asOf: data.as_of,
+          refused: data.refused,
           ts: Date.now(),
         },
       ]);
@@ -99,7 +137,8 @@ export default function ChatPanel({ asOf }) {
 
       <div className="chat-messages">
         {messages.map((m, i) => (
-          <div key={i} className={`chat-message chat-${m.role}`}>
+          <div key={i} className={`chat-message chat-${m.role}${m.refused ? " chat-refusal" : ""}`}>
+            {m.refused && <span className="chat-refusal-label">Not in memory</span>}
             <div className="chat-content">{renderInline(m.content)}</div>
             {m.citations?.length > 0 && (
               <div className="chat-citations">
@@ -110,6 +149,7 @@ export default function ChatPanel({ asOf }) {
                 ))}
               </div>
             )}
+            {m.role === "assistant" && !m.refused && <WhyPanel message={m} facts={facts} />}
           </div>
         ))}
         {loading && (

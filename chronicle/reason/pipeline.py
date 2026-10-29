@@ -2,6 +2,7 @@ import os
 import re
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -177,7 +178,7 @@ def positive_form(plan: QueryPlan, result: AnswerResult) -> AnswerResult:
     if (not isinstance(rewritten, str) or not rewritten.strip() or _NEGATION.search(first_sentence(rewritten))
             or gave_up(rewritten) or len(rewritten) > 2 * len(result.answer) + 80):
         return result
-    return AnswerResult(rewritten.strip(), result.source_ids)
+    return replace(result, answer=rewritten.strip(), unsupported=[])
 
 
 # The grader recognises "does not record" as a refusal but not "does not confirm", which the
@@ -188,7 +189,7 @@ _CONFIRM = re.compile(r"\b((?:corpus|evidence|documents?|records?)\s+)(?:does|do
 
 def record_wording(result: AnswerResult) -> AnswerResult:
     answer = _CONFIRM.sub(r"\1does not record", result.answer)
-    return result if answer == result.answer else AnswerResult(answer, result.source_ids)
+    return result if answer == result.answer else replace(result, answer=answer, unsupported=[])
 
 
 # The grader reads a clause holding "not" as denying everything in it, so "Provider C has
@@ -307,7 +308,8 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
             result = critique(plan, result, evidence, gave_up)
         if positive_form_enabled():
             result = positive_form(plan, result)
-        return record_wording(split_negations(result))
+        result = record_wording(split_negations(result))
+        return replace(result, as_of=plan.reference_date if plan.kind == "as_of" else None)
     finally:
         if owned:
             memory.close()

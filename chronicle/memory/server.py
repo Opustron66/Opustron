@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
-from chronicle.reason.pipeline import answer_question
+from chronicle.reason.pipeline import answer_question, gave_up
 from chronicle.reason.planner import InvalidQueryDate
 
 from .api import CLAIMS_FILE, MemoryAPI
@@ -38,10 +38,20 @@ class Citation(BaseModel):
     doc_id: str
 
 
+class Support(BaseModel):
+    doc_id: str
+    quote: str
+
+
 class AskResponse(BaseModel):
     answer: str
     source_ids: list[str]
     citations: list[Citation]
+    # For the UI's "Why?" panel: verified quotes behind the answer, the as-of date it was limited
+    # to, and whether it is a refusal ("not in the corpus" / "does not record").
+    support: list[Support] = []
+    as_of: date | None = None
+    refused: bool = False
 
 
 class StateMemory:
@@ -88,7 +98,9 @@ def router(memory: MemoryAPI | StateMemory) -> APIRouter:
             # Provider failures can include credentials or corpus text. Keep them private.
             raise HTTPException(502, "Unable to generate an answer. Check model configuration and try again.") from None
         return AskResponse(answer=result.answer, source_ids=result.source_ids,
-                           citations=[Citation(doc_id=doc_id) for doc_id in result.source_ids])
+                           citations=[Citation(doc_id=doc_id) for doc_id in result.source_ids],
+                           support=[Support(**s) for s in result.support], as_of=result.as_of,
+                           refused=gave_up(result.answer))
 
     @routes.get("/entities")
     def entities() -> list[dict[str, Any]]:
