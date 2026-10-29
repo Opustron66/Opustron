@@ -26,3 +26,7 @@ class AnswerResult:
     source_ids: list[str] = field(default_factory=list)
     # Names/numbers/values in the answer that no verified evidence quote backs (grounding.py).
     unsupported: list[str] = field(default_factory=list, compare=False)
+    # Verified evidence quotes behind the answer, {"doc_id", "quote"}; the UI's "Why?" panel shows them.
+    support: list[dict] = field(default_factory=list, compare=False)
+    # The date an as-of answer was limited to.
+    as_of: date | None = field(default=None, compare=False)

@@ -14,7 +14,7 @@ from itertools import pairwise
 from chronicle.guard import llm
 
 from .dates import annotate_dates
-from .grounding import unsupported
+from .grounding import unsupported, verified_support
 from .models import AnswerResult, Evidence, QueryPlan
 
 SUPPORT = {"type": "array", "items": {
@@ -110,10 +110,20 @@ def _phrases(text: str) -> set[str]:
     return {f"{a} {b}" for a, b in pairwise(words) if a not in _PHRASE_STOP and b not in _PHRASE_STOP}
 
 
+def _question_phrases(question: str) -> set[str]:
+    """The question's phrases, plus the last part of a hyphenated word with the word after it:
+    "cost-reduction target" also asks for "reduction target", which is how a 14 May review of the
+    draft wrote it (run 7 refused that as-of question for lack of the line)."""
+    words = _TOKEN.findall(question.lower())
+    extra = {f"{a.rsplit('-', 1)[1]} {b}" for a, b in pairwise(words)
+             if "-" in a and a.rsplit("-", 1)[1] and b not in _PHRASE_STOP}
+    return _phrases(question) | extra
+
+
 def key_lines(question: str, evidence: list[Evidence]) -> list[str]:
     """Up to ``KEY_LINES`` evidence lines that share a rare two-word phrase with the question,
     rarest match first, each tagged with its document id."""
-    asked = _phrases(question)
+    asked = _question_phrases(question)
     if not asked:
         return []
     lines = []
@@ -185,6 +195,10 @@ ANSWER_FORM = """How to write the answer:
 - For who holds a role, answer from clear indirect evidence too: if documents tie a person to a
   role or project ("Priya's team" builds Orion; Priya added Orion's registry), name the
   best-supported person with their full name rather than saying the corpus does not record it.
+  When the evidence ties the role to both a team and a person, name both ("the evaluator
+  workstream (Jin Oh)").
+- Name a chosen metric, method or formula as the evidence specifies it ("symmetric KL divergence
+  between ... histograms"), not only its category ("distribution-based").
 - "Who proposed / suggested / raised X" is the first person who suggested it, even as a question
   ("worth porting to Atlas?"); approving, assigning or later repeating it is not proposing.
 - When the corpus does not record what was asked, say "The corpus does not record <it>." and
@@ -449,4 +463,5 @@ def generate_answer(plan: QueryPlan, evidence: list[Evidence], tools: Tools | No
         answer = "Not in the corpus"
     texts = [t for e in evidence for t in (e.text, _render(e))]
     return AnswerResult(answer=answer, source_ids=ids,
-                        unsupported=unsupported(answer, parsed.get("support"), plan.question, texts))
+                        unsupported=unsupported(answer, parsed.get("support"), plan.question, texts),
+                        support=verified_support(parsed.get("support"), texts))

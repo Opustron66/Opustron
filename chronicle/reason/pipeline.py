@@ -2,6 +2,7 @@ import os
 import re
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from chronicle.memory import MemoryAPI
 from .abstention import should_abstain
 from .answerer import Tools, answer_template, generate_answer, generate_corpus_answer
 from .critic import critic_enabled, critique
-from .grounding import found_anywhere
+from .grounding import claims, found_anywhere, norm
 from .models import AnswerResult, QueryPlan
 from .planner import plan_query, understand
 from .retriever import (
@@ -177,7 +178,7 @@ def positive_form(plan: QueryPlan, result: AnswerResult) -> AnswerResult:
     if (not isinstance(rewritten, str) or not rewritten.strip() or _NEGATION.search(first_sentence(rewritten))
             or gave_up(rewritten) or len(rewritten) > 2 * len(result.answer) + 80):
         return result
-    return AnswerResult(rewritten.strip(), result.source_ids)
+    return replace(result, answer=rewritten.strip(), unsupported=[])
 
 
 # The grader recognises "does not record" as a refusal but not "does not confirm", which the
@@ -188,7 +189,7 @@ _CONFIRM = re.compile(r"\b((?:corpus|evidence|documents?|records?)\s+)(?:does|do
 
 def record_wording(result: AnswerResult) -> AnswerResult:
     answer = _CONFIRM.sub(r"\1does not record", result.answer)
-    return result if answer == result.answer else AnswerResult(answer, result.source_ids)
+    return result if answer == result.answer else replace(result, answer=answer, unsupported=[])
 
 
 # The grader reads a clause holding "not" as denying everything in it, so "Provider C has
@@ -219,16 +220,55 @@ def vote_key(answer: str) -> str:
     return re.sub(r"[^a-z0-9%!]+", " ", first.lower()).strip()
 
 
-def vote(first: AnswerResult, again: Callable[[float], AnswerResult]) -> AnswerResult:
-    """Majority of up to three answers. A second sample that agrees with the first settles it;
-    otherwise a third decides, and with no majority the first (temperature 0) answer stands."""
+# Two answers agree when they make the same claims (names, numbers, a short answer's words), not
+# when their first sentences match: "Rohan Dasgupta." and "Rohan Dasgupta leads Beacon." are the
+# same answer. With exact first sentences almost no two free-text samples matched, so the vote fell
+# back to the first answer, and voted questions flipped between runs more than the others (27% of
+# them across runs 4-7, against 6%).
+AGREE = 0.5
+
+
+def claim_set(answer: str, question: str = "") -> set[str]:
+    """What an answer asserts, for comparing samples: its yes/no, or that it refused, plus its claims."""
+    if gave_up(answer):
+        return {"<refusal>"}
+    out = {norm(c) for c in claims(answer, question)}
+    # A name's single words ("rohan", "dasgupta") would count it twice next to "rohan dasgupta".
+    parts = {w for c in out if " " in c for w in c.split()}
+    out = {c for c in out if " " in c or c not in parts}
+    if m := _YES_NO.match(answer):
+        out.add(f"<{m.group(1).lower()}>")
+    return out
+
+
+def similarity(a: str, b: str, question: str = "") -> float:
+    ca, cb = claim_set(a, question), claim_set(b, question)
+    if ("<yes>" in ca and "<no>" in cb) or ("<no>" in ca and "<yes>" in cb):
+        return 0.0
+    if not ca and not cb:
+        return float(vote_key(a) == vote_key(b))
+    return len(ca & cb) / len(ca | cb) if ca | cb else 0.0
+
+
+def agree(a: str, b: str, question: str = "") -> bool:
+    return similarity(a, b, question) >= AGREE
+
+
+def vote(first: AnswerResult, again: Callable[[float], AnswerResult], question: str = "") -> AnswerResult:
+    """Up to three answers. A second sample that agrees with the first settles it; otherwise a
+    third decides. With no two agreeing, the most typical one stays: the answer whose claims
+    overlap most with the other two (the first, temperature-0 answer on a tie)."""
     second = again(VOTE_TEMPERATURE)
-    if vote_key(second.answer) == vote_key(first.answer):
+    if agree(first.answer, second.answer, question):
         return first
     third = again(VOTE_TEMPERATURE)
-    if vote_key(third.answer) == vote_key(second.answer):
+    if agree(first.answer, third.answer, question):
+        return first
+    if agree(second.answer, third.answer, question):
         return second
-    return first
+    samples = [first, second, third]
+    scores = [sum(similarity(s.answer, o.answer, question) for o in samples if o is not s) for s in samples]
+    return samples[max(range(3), key=lambda i: (scores[i], -i))]
 
 
 def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date | None = None) -> AnswerResult:
@@ -248,7 +288,7 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
                       open=lambda doc_ids: open_documents(plan, memory, doc_ids, path)) if agentic_enabled() else None
         result = generate_answer(plan, evidence, tools)
         if vote_enabled() and is_hard(plan):
-            result = vote(result, lambda t: generate_answer(plan, evidence, tools, temperature=t))
+            result = vote(result, lambda t: generate_answer(plan, evidence, tools, temperature=t), plan.question)
         if grounding_enabled():
             result = recheck(plan, result, lambda hint: generate_answer(plan, evidence, tools, hint),
                              [e.text for e in evidence])
@@ -268,7 +308,8 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
             result = critique(plan, result, evidence, gave_up)
         if positive_form_enabled():
             result = positive_form(plan, result)
-        return record_wording(split_negations(result))
+        result = record_wording(split_negations(result))
+        return replace(result, as_of=plan.reference_date if plan.kind == "as_of" else None)
     finally:
         if owned:
             memory.close()

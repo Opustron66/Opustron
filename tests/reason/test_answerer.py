@@ -83,6 +83,7 @@ def test_answer_form_rules_are_in_every_prompt():
     assert "count as put in place" in system and "need evidence that they happened" in system
     assert "in the evidence's own words" in system and '"Mon EOD"' in system
     assert "best-supported person" in system and "for now" in system
+    assert "name both" in system and "not only its category" in system
 
 
 def test_as_of_questions_ask_for_yes_or_no_first():

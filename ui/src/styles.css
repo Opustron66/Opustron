@@ -232,3 +232,58 @@ h1 { font: 650 clamp(25px, 2.65vw, 38px)/1.25 var(--heading); letter-spacing: -1
 .mode-badge { font-size: 9px; }
 .chat-preview-body > p { font-size: 12px; }
 @media (max-width: 760px) { .memory-detail { max-height: 620px; } }
+
+/* ── "Why?" panel, refusal card, fact changes ────────────────────────────── */
+.chat-why { margin-top: 6px; font-size: 12px; color: var(--secondary); }
+.chat-why summary { cursor: pointer; color: var(--accent); width: fit-content; }
+.chat-why summary:hover { text-decoration: underline; }
+.chat-why[open] {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.chat-why[open] summary { margin-bottom: 6px; }
+.why-asof { margin-bottom: 6px; }
+.why-quotes { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.why-quotes li { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.why-replaced { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.why-label, .chat-refusal-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.chat-refusal .chat-content {
+  background: transparent;
+  border: 1px dashed var(--muted);
+  color: var(--secondary);
+}
+.chat-refusal-label { display: block; margin-bottom: 4px; }
+
+.fact-change { color: var(--text); }
+.fact-change-slot { color: var(--secondary); }
+.fact-change-before { color: var(--secondary); text-decoration: line-through; }
+.fact-change-after { color: var(--green); }
+.fact-change-date { color: var(--muted); }
+
+
+.fact-toggle { display: flex; justify-content: space-between; gap: 10px; width: 100%; background: transparent; color: var(--text); border: 0; padding: 0; text-align: left; }
+.fact-toggle > span:last-child { color: var(--muted); }
+.fact-explain { font-size: 11px; line-height: 1.6; padding: 8px 0; color: var(--secondary); }
+.fact-explain-dates { margin-top: 6px; color: var(--muted); }
+.chat-header-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.chat-header { flex-wrap: wrap; gap: 8px; }
+.chat-header-btn { border: 1px solid var(--line); color: var(--secondary); background: transparent; border-radius: 5px; padding: 4px 6px; font-size: 10px; }
+.chat-header-btn:disabled { opacity: .4; cursor: not-allowed; }
+.chat-history-drawer { overflow-y: auto; max-height: 230px; padding: 14px; border-bottom: 1px solid var(--line); }
+.chat-history ul { list-style: none; }
+.chat-history-day { font-size: 10px; color: var(--muted); margin: 8px 0; }
+.chat-history-item { width: 100%; display: flex; flex-direction: column; gap: 4px; text-align: left; border: 1px solid var(--line); border-radius: 6px; padding: 9px; background: var(--card); color: var(--text); }
+.chat-history-meta, .chat-history-empty { font-size: 10px; color: var(--muted); }
+.chat-history-title { font-size: 11px; }
+.chat-empty-title { font-size: 17px; margin-bottom: 12px; }
+.chat-empty-hint { color: var(--secondary); font-size: 11px; line-height: 1.7; }
+.chat-examples { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+.chat-example { text-align: left; background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 10px; font-size: 11px; }

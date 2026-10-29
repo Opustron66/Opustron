@@ -25,7 +25,7 @@ test('offline preview is labelled and the selected entity follows the date', asy
   const { container } = render(<App />);
   expect(await screen.findByText('Preview data')).toBeInTheDocument();
   expect(screen.getByText(/four example facts/)).toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: /payments service/ }));
+  await userEvent.click(within(screen.getByLabelText('Memory browser')).getByRole('button', { name: /payments service/ }));
   const detail = within(screen.getByLabelText('Selected memory'));
   expect(detail.getByText('Alice Chen').closest('.fact-row')).toHaveClass('fact-current');
   fireEvent.change(screen.getByLabelText('Select date in memory'), { target: { value: '34' } });

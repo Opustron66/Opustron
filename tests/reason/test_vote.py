@@ -71,3 +71,22 @@ def test_pipeline_votes_only_on_hard_questions_when_enabled(monkeypatch):
     assert run(hard) == 1  # off by default
     monkeypatch.setenv("CHRONICLE_VOTE", "1")
     assert run(hard) == 2 and run("Who owns payments?") == 1
+
+
+@pytest.mark.parametrize("a,b,same", [
+    ("Rohan Dasgupta.", "Rohan Dasgupta leads Beacon.", True),
+    ("From 71% to 94%.", "MR !521 raised it from 71% to 94%.", True),
+    ("Rohan Dasgupta.", "Anya Volkov.", False),
+    ("The corpus does not record it.", "The corpus does not record who leads it.", True),
+    ("The corpus does not record it.", "Rohan Dasgupta.", False),
+    ("Yes. Both are reserved.", "No. Both are reserved.", False),
+])
+def test_samples_agree_when_they_make_the_same_claims(a, b, same):
+    assert pipeline.agree(a, b, "Who leads Project Beacon?") is same
+
+
+def test_with_no_two_agreeing_the_most_typical_answer_stays():
+    # The third shares a claim with each of the others; the first and second share nothing.
+    again, _ = _samples("Morgan Lee and Alex Chen.", "Rohan Dasgupta and Morgan Lee.")
+    first = AnswerResult("Rohan Dasgupta and Jin Oh.", [])
+    assert pipeline.vote(first, again, "Who proposed it and who shipped it?").answer == "Rohan Dasgupta and Morgan Lee."

@@ -68,11 +68,17 @@ def unsupported(answer: str, support, question: str, evidence_texts: list[str]) 
     wanted = claims(answer, question)
     if not wanted:
         return []
+    backed = "\n".join(norm(s["quote"]) for s in verified_support(support, evidence_texts))
+    return [c for c in wanted if norm(c) not in backed]
+
+
+def verified_support(support, evidence_texts: list[str]) -> list[dict]:
+    """The ``support`` quotes that really occur in the evidence, as ``{"doc_id", "quote"}``."""
     haystack = norm("\n".join(evidence_texts))
-    quotes = []
+    out = []
     for item in support if isinstance(support, list) else []:
         quote = item.get("quote") if isinstance(item, dict) else item if isinstance(item, str) else None
         if isinstance(quote, str) and len(norm(quote)) >= MIN_QUOTE and norm(quote) in haystack:
-            quotes.append(norm(quote))
-    backed = "\n".join(quotes)
-    return [c for c in wanted if norm(c) not in backed]
+            doc_id = item.get("doc_id") if isinstance(item, dict) else None
+            out.append({"doc_id": doc_id if isinstance(doc_id, str) else "", "quote": quote.strip()})
+    return out

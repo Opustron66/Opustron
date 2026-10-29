@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import CitationPopover from "./CitationPopover";
+import { describeStatusAt, describeValidity, humanizeFact } from "../services/humanize";
 import { factsAbout, hasEndedBy, isTrueAt } from "../services/api";
 
 const fmt = (d, missing) =>
@@ -7,7 +8,7 @@ const fmt = (d, missing) =>
     ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
     : missing;
 
-const words = (predicate) => predicate.replaceAll("_", " ");
+const words = (predicate) => predicate.replace(/^attr:/, "").replaceAll("_", " ");
 
 // "Alice owns payments" reads as "owns: payments" on Alice's card and
 // "who owns: Alice" on the payments card.
@@ -19,6 +20,7 @@ function groupFor(entityName, fact) {
 
 export default function EntityCard({ entity, allFacts, asOf }) {
   const [openCitation, setOpenCitation] = useState(null);
+  const [openExplanation, setOpenExplanation] = useState(null);
 
   const groups = {};
   factsAbout(allFacts, entity.name).forEach((f) => {
@@ -51,7 +53,14 @@ export default function EntityCard({ entity, allFacts, asOf }) {
                       key={f.fact_id}
                       className={`fact-row ${isCurrent ? "fact-current" : ""} ${isSuperseded ? "fact-superseded" : ""}`}
                     >
-                      <span className="fact-object">{other}</span>
+                      <button type="button" className="fact-toggle" title="What does this mean?"
+                        aria-expanded={openExplanation === f.fact_id} aria-controls={`explain-${f.fact_id}`}
+                        onClick={() => setOpenExplanation(openExplanation === f.fact_id ? null : f.fact_id)}>
+                        <span className="fact-object">{other}</span><span aria-hidden="true">{openExplanation === f.fact_id ? '−' : '+'}</span>
+                      </button>
+                      {openExplanation === f.fact_id && <div className="fact-explain" id={`explain-${f.fact_id}`}>
+                        <p>{humanizeFact(f)}</p><p className="fact-explain-dates">{describeValidity(f)} {describeStatusAt(f, asOf)}</p>
+                      </div>}
                       <span className="fact-validity">
                         {fmt(f.valid_from, "unknown")} → {fmt(f.valid_to, "now")}
                       </span>

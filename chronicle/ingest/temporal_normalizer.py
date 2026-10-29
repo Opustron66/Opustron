@@ -25,6 +25,7 @@ NUMBERS = {w: i for i, w in enumerate(
     ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"])}
 NUMBERS.update({"a": 1, "an": 1, "couple": 2, "few": 3})
 UNITS = r"(day|week|month|year)s?"
+MAX_YEAR_DRIFT = 10  # dateparser results further than this from the document's year are rejected
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,33 @@ def _period(kind: str, offset: int, ref: date) -> Resolved | None:
     return None
 
 
+_ORD = r"(?:st|nd|rd|th)?"
+_TO = r" ?(?:-|–|—|to|through|thru|until) ?"
+# "may 5–18", "may 5 - june 2", "5–18 may", "5 may - 2 june", each with an optional ", 2026".
+# dateparser reads the trailing day of "may 5–18" as a two-digit year (2118).
+_MONTH_FIRST = re.compile(rf"([a-z]+) (\d{{1,2}}){_ORD}{_TO}(?:([a-z]+) )?(\d{{1,2}}){_ORD}(?:,? (\d{{4}}))?")
+_DAY_FIRST = re.compile(rf"(\d{{1,2}}){_ORD}(?: ([a-z]+))?{_TO}(\d{{1,2}}){_ORD} ([a-z]+)(?:,? (\d{{4}}))?")
+
+
+def _day_range(t: str, ref: date) -> Resolved | None:
+    if m := _MONTH_FIRST.fullmatch(t):
+        m1, d1, m2, d2, y = m[1], m[2], m[3] or m[1], m[4], m[5]
+    elif m := _DAY_FIRST.fullmatch(t):
+        d1, m1, d2, m2, y = m[1], m[2] or m[4], m[3], m[4], m[5]
+    else:
+        return None
+    if m1 not in MONTHS or m2 not in MONTHS:
+        return None
+    year = int(y) if y else ref.year
+    try:
+        start, end = date(year, MONTHS[m1], int(d1)), date(year, MONTHS[m2], int(d2))
+    except ValueError:
+        return None
+    if end < start:  # "dec 28 - jan 3"
+        end = end.replace(year=year + 1)
+    return Resolved(start, end, confidence=1.0 if y else 0.9)
+
+
 def _rules(text: str, ref: date, cfg: NormalizerConfig) -> Resolved | None:
     t = re.sub(r"\s+", " ", text.lower().strip().rstrip(".,")).replace("the day after tomorrow", "in 2 days")
     t = re.sub(r"^(on|by|until|since|from|at) ", "", t)
@@ -136,6 +164,8 @@ def _rules(text: str, ref: date, cfg: NormalizerConfig) -> Resolved | None:
     if m := re.fullmatch(r"([a-z]+)(?: (\d{4}))?", t) and t.split()[0] in MONTHS:
         parts = t.split()
         return _month_range(int(parts[1]) if len(parts) > 1 else ref.year, MONTHS[parts[0]])
+    if (r := _day_range(t, ref)) is not None:
+        return r
     if m := re.fullmatch(r"(?:(\d{1,2})(?:st|nd|rd|th)? ([a-z]+)|([a-z]+) (\d{1,2})(?:st|nd|rd|th)?)(?:,? (\d{4}))?", t):
         day = int(m[1] or m[4])
         mon = MONTHS.get(m[2] or m[3])
@@ -169,7 +199,8 @@ def resolve(
         settings={"RELATIVE_BASE": datetime.combine(reference, datetime.min.time()),
                   "PREFER_DATES_FROM": "future", "RETURN_AS_TIMEZONE_AWARE": False},
     )
-    if parsed is not None:
+    # A year far from the document's is a misparse (e.g. a day read as a two-digit year).
+    if parsed is not None and abs(parsed.year - reference.year) <= MAX_YEAR_DRIFT:
         return Resolved(parsed.date(), confidence=0.6, method="dateparser")
     if llm_fallback and (r := llm_fallback(expr, reference)) is not None:
         return r

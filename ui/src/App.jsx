@@ -118,7 +118,7 @@ export default function App() {
           <section className="memory-detail" aria-label="Selected memory"><div className="detail-eyebrow"><span className="eyebrow">THE DETAILS</span><span className="detail-date"><Icon name="clock" size={13} />{formatDay(asOf)}</span></div>
             {current ? <EntityCard key={current.name} entity={current} allFacts={filteredFacts} asOf={asOf} /> : <div className="detail-empty"><Icon name="search" size={30} /><h3>A little exploring goes a long way.</h3><p>Choose a person or project to see their facts and sources.</p></div>}
           </section>
-          <section className="app-main"><ChatPanel asOf={asOf} enabled={memory.source === 'live' && memory.config?.chat_enabled === true} onExplore={explore} /></section>
+          <section className="app-main"><ChatPanel facts={facts} asOf={asOf} enabled={memory.source === 'live' && memory.config?.chat_enabled === true} onExplore={explore} /></section>
         </div>}
       </>}
       <footer className="app-footer"><EgressLog /></footer>

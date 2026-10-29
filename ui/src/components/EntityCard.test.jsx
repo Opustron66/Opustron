@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test } from "vitest";
 import EntityCard from "./EntityCard";
@@ -50,11 +50,19 @@ test("an unknown start date says so", () => {
   expect(screen.getByText("unknown → now")).toBeInTheDocument();
 });
 
-test("citation popover opens with the source quote and closes on outside click", async () => {
+test("no raw source codes are shown on the card", () => {
   renderCard("payments service", "2026-05-10");
-  await userEvent.click(screen.getByRole("button", { name: "Source: email_001" }));
-  expect(screen.getByRole("tooltip")).toHaveTextContent("Alice owns the payments service going forward.");
+  expect(screen.queryByText(/email_0/)).not.toBeInTheDocument();
+});
 
-  fireEvent.mouseDown(document.body);
-  expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+test("clicking a fact explains it in plain English", async () => {
+  renderCard("payments service", "2026-05-20");
+  const toggle = within(row("Alice Chen")).getByRole("button", { name: /Alice Chen/ });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await userEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText("Alice Chen owns payments service.")).toBeInTheDocument();
+  expect(screen.getByText(/True from 1 May 2026 until 15 May 2026\. By 20 May 2026 this was no longer true\./)).toBeInTheDocument();
+  await userEvent.click(toggle);
+  expect(screen.queryByText("Alice Chen owns payments service.")).not.toBeInTheDocument();
 });
