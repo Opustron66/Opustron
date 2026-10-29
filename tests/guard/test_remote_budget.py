@@ -158,6 +158,79 @@ def test_wrong_model_cannot_spend(ledger):
         ledger[0].reserve("some/other-model", 4096)
 
 
+def test_raise_to_five_dollars_preserves_spending_and_inflight_requests(ledger):
+    budget, redis = ledger
+    settled = budget.reserve(rb.MODEL, 4096)
+    budget.settle(settled, 2000, 500)
+    pending = budget.reserve(rb.MODEL, 4096)
+    before = budget.status()["spent_or_reserved_microusd"]
+    budget.raise_limit("5")
+    assert budget.status() == {"limit_microusd": 5_000_000, "spent_or_reserved_microusd": before}
+    assert redis.hexists(budget.key, pending)
+    budget.settle(pending, 2000, 500)
+    assert budget.status()["spent_or_reserved_microusd"] == 480
+
+
+def test_stale_configuration_cannot_raise_again_or_spend(ledger):
+    budget, _ = ledger
+    stale = rb.RemoteBudget()
+    budget.raise_limit("5")
+    with pytest.raises(rb.BudgetUnavailable):
+        stale.reserve(rb.MODEL, 4096)
+    with pytest.raises(rb.BudgetUnavailable):
+        stale.raise_limit("10")
+    assert budget.status()["limit_microusd"] == 5_000_000
+
+
+@pytest.mark.parametrize("target", ["0.25", "0.1", "0", "nan"])
+def test_raise_cannot_decrease_or_reset_budget(ledger, target):
+    budget, _ = ledger
+    with pytest.raises(rb.BudgetUnavailable):
+        budget.raise_limit(target)
+    assert budget.status()["limit_microusd"] == 250_000
+
+
+def test_ultra_reservations_and_settlement_use_ultra_prices(ledger, monkeypatch):
+    budget, _ = ledger
+    budget.raise_limit("5")
+    monkeypatch.setenv("CHRONICLE_SPEND_LIMIT_USD", "5")
+    monkeypatch.setenv("CHRONICLE_MODEL", rb.ULTRA)
+    transport = Mock(return_value=response())
+    assert LLMClient(api_key="fake", transport=transport, use_cache=False).complete(
+        [{"role": "user", "content": "hello"}]) == "Saved answer"
+    assert transport.call_args.kwargs["model"] == rb.ULTRA
+    assert budget.status()["spent_or_reserved_microusd"] == 3500
+    receipt = budget.reserve(rb.ULTRA, 16_384)
+    assert budget.status()["spent_or_reserved_microusd"] == 3500 + 1_097_728
+    budget.settle(receipt, 2000, 500)
+    assert budget.status()["spent_or_reserved_microusd"] == 7000
+
+
+def test_settlement_uses_reserved_model_even_if_default_is_different(ledger):
+    budget, _ = ledger
+    budget.raise_limit("5")
+    receipt = budget.reserve(rb.ULTRA, 4096)
+    budget.settle(receipt, 2000, 500)
+    assert budget.status()["spent_or_reserved_microusd"] == 3500
+
+
+def test_raise_cli_reports_new_limit_without_resetting_spent(ledger, monkeypatch, capsys):
+    budget, _ = ledger
+    receipt = budget.reserve(rb.MODEL, 4096)
+    budget.settle(receipt, 2000, 500)
+    monkeypatch.setattr("sys.argv", ["chronicle.budget", "raise-limit", "--to", "5"])
+    rb.main()
+    assert '"limit_microusd": 5000000' in capsys.readouterr().out
+
+
+def test_raise_does_not_recreate_a_deleted_ledger(ledger):
+    budget, redis = ledger
+    redis.delete(budget.key)
+    with pytest.raises(rb.BudgetUnavailable):
+        budget.raise_limit("5")
+    assert not redis.exists(budget.key)
+
+
 def test_sdk_retries_are_disabled_for_remote_budget(ledger, monkeypatch):
     constructor = Mock(return_value=SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=Mock()))))
     monkeypatch.setattr("openai.OpenAI", constructor)

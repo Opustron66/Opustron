@@ -4,7 +4,8 @@ Render Free can host the app while Nebius bills for model inference. The
 existing memory ZIP is reused: this setup does not ingest or train anything.
 The shared budget is stored in Upstash Redis, separately from Render's temporary
 disk. Use the Free database plan and keep its ID and spending limit unchanged
-across deployments. Never give it a TTL or enable eviction of the budget key.
+across deployments unless deliberately raising the limit with the command below.
+Never give it a TTL or enable eviction of the budget key.
 
 Code deployment and budget initialization do not call a model. Keep
 `CHRONICLE_WEB_CHAT_ENABLED=0` until spending is explicitly approved. A real
@@ -34,7 +35,7 @@ $env:UPSTASH_REDIS_REST_TOKEN = [System.Net.NetworkCredential]::new('', $RedisSe
 $env:CHRONICLE_MODEL = 'nvidia/Nemotron-3_5-Lightning'
 $env:CHRONICLE_SPEND_BUDGET_ID = 'demo-v1'
 $env:CHRONICLE_SPEND_LIMIT_USD = '0.25'
-& $Py -m chronicle.guard.remote_budget init
+& $Py -m chronicle.budget init
 ```
 
 Expected output includes `limit_microusd: 250000` and
@@ -42,7 +43,7 @@ Expected output includes `limit_microusd: 250000` and
 configuration. An existing ledger is never reset by `init`; inspect it instead:
 
 ```powershell
-& $Py -m chronicle.guard.remote_budget status
+& $Py -m chronicle.budget status
 Remove-Item Env:UPSTASH_REDIS_REST_TOKEN
 Remove-Variable RedisSecret
 ```
@@ -66,8 +67,8 @@ memory contents, or provider credentials.
 | `CHRONICLE_WEB_CHAT_ENABLED` | **`0` until spending is approved** |
 
 Keep the existing snapshot settings and Upstash credentials. The remote guard
-supports only Lightning, with the repository's $0.06/M input and $0.24/M output
-prices. It refuses other models rather than applying the wrong rate. Leave
+supports Lightning ($0.06/M input, $0.24/M output) and Ultra ($1/M input, $3/M
+output), using the repository's pinned prices. It refuses other models. Leave
 thinking at the model default to preserve reasoning quality; smaller output
 limits can truncate reasoning and trigger additional answer attempts.
 
@@ -98,6 +99,56 @@ retry needs its own reservation. A timeout, crash, rejected request, missing
 usage or failed settlement retains the reservation: ambiguous requests are
 never assumed free. This may consume the *app allowance* faster than actual
 provider spending. No automatic refunds, expiry or resets are performed.
+
+## Raise an existing allowance to $5 and switch to Ultra
+
+Keep chat disabled while updating the database and Render configuration. Deploy
+the Ultra-supporting code first. The model is
+`nvidia/Nemotron-3-Ultra-550b-a55b`, the same model ID used for benchmark runs;
+using the same model does not itself reproduce all benchmark pipeline settings.
+
+In local PowerShell, re-enter the private Upstash credentials and use the
+**existing** budget ID and **old** limit to authorize the increase:
+
+```powershell
+$Py = Join-Path (Get-Location).Path '.venv\Scripts\python.exe'
+$env:UPSTASH_REDIS_REST_URL = Read-Host 'Upstash REST URL'
+$RedisSecret = Read-Host 'Upstash REST token' -AsSecureString
+$env:UPSTASH_REDIS_REST_TOKEN = [System.Net.NetworkCredential]::new('', $RedisSecret).Password
+$env:CHRONICLE_SPEND_BUDGET_ID = 'demo-v1'
+$env:CHRONICLE_SPEND_LIMIT_USD = '0.25'
+$env:CHRONICLE_MODEL = 'nvidia/Nemotron-3-Ultra-550b-a55b'
+& $Py -m chronicle.budget raise-limit --to 5
+Remove-Item Env:UPSTASH_REDIS_REST_TOKEN
+Remove-Variable RedisSecret
+```
+
+Expected output has `limit_microusd: 5000000`. Spent/reserved funds remain
+unchanged: $5 is the new **total allowance**, not an extra $5. This command only
+updates the existing Redis ledger; it never calls a model or changes Render.
+The old-limit comparison prevents an accidental repeated increase or a stale
+configuration overwriting the database. Do not delete the key or rerun `init`.
+
+After a successful increase, set these matching values in Render:
+
+```text
+CHRONICLE_SPEND_LIMIT_USD=5
+CHRONICLE_MODEL=nvidia/Nemotron-3-Ultra-550b-a55b
+CHRONICLE_SPEND_BUDGET_ID=demo-v1
+```
+
+Keep `CHRONICLE_SPEND_BACKEND=upstash`, `CHRONICLE_WEB_EPHEMERAL=1`, the Upstash
+credentials and memory snapshot settings. Use `CHRONICLE_WEB_CHAT_ENABLED=0`
+until ready for paid questions, then follow step 4 above.
+
+Ultra reserves about $1.10 per provider attempt at a 16,384 output-token limit,
+settling to actual reported usage afterward. This is headroom, not a flat price
+per question. An ambiguous failed request retains its larger reservation, so
+the demo can stop with unspent provider credit remaining. Unknown models are
+still blocked. Each receipt records its reserved model so mixed-model requests
+are settled using the correct rate even when the default model changes.
+
+For future status checks, set the local `CHRONICLE_SPEND_LIMIT_USD=5` too.
 
 If the ledger is unavailable, malformed, deleted, expired or its limit does not
 match the configuration, new model calls are blocked. The local spending log
