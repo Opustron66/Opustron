@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import ChatPanel from "./ChatPanel";
@@ -110,12 +110,13 @@ test("an answer with nothing to explain has no Why? panel", async () => {
 });
 
 test("an empty chat suggests questions, and clicking one asks it", async () => {
-  answerWith({ answer: "Bob Nakamura.", citations: [] });
+  answerWith({ answer: "platform-eng/atlas", citations: [] });
   render(<ChatPanel asOf={asOf} />);
-  await userEvent.click(screen.getByRole("button", { name: "Who owned payments in March?" }));
-  expect(await screen.findByText("Bob Nakamura.")).toBeInTheDocument();
-  expect(JSON.parse(fetch.mock.calls[0][1].body).question).toBe("Who owned payments in March?");
-  expect(screen.queryByRole("button", { name: "Who owned payments in March?" })).not.toBeInTheDocument();
+  expect(screen.getByText(/Try a question from NVIDIA Corpus A/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "What is the GitLab project path for Atlas?" }));
+  expect(await screen.findByText("platform-eng/atlas")).toBeInTheDocument();
+  expect(JSON.parse(fetch.mock.calls[0][1].body).question).toBe("What is the GitLab project path for Atlas?");
+  expect(screen.queryByRole("button", { name: "What is the GitLab project path for Atlas?" })).not.toBeInTheDocument();
 });
 
 test("chats are saved by day and come back after a reload", async () => {
@@ -156,4 +157,22 @@ test("an unavailable demo budget explains that memory browsing still works", asy
   await askQuestion("Who owns billing?");
   expect(await screen.findByText(/Live chat is unavailable or its demo budget has been used/)).toBeInTheDocument();
   expect(screen.getByText(/You can still explore saved facts and sources/)).toBeInTheDocument();
+});
+
+test("a pending answer shows elapsed time without sending another request", async () => {
+  vi.useFakeTimers();
+  let resolve;
+  const spy = vi.fn(() => new Promise((done) => { resolve = done; }));
+  vi.stubGlobal('fetch', spy);
+  try {
+    render(<ChatPanel asOf={asOf} />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Who owns Atlas?' } });
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+    await act(async () => { await vi.advanceTimersByTimeAsync(16000); });
+    expect(screen.getByRole('status')).toHaveTextContent('Generating an answer… 16s');
+    expect(screen.getByRole('status')).toHaveTextContent('multiple evidence checks');
+    expect(spy).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve({ ok: true, json: async () => ({ answer: 'Alex Chen.', citations: [] }) }); });
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  } finally { vi.useRealTimers(); }
 });
