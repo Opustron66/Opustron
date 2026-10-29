@@ -31,8 +31,10 @@ async function loadMemory(signal) {
   const claims = facts.filter((f) => (!f.kind || f.kind === 'claim') && f.subject && f.object);
   if (!claims.length || !span.start || !span.end) return { source: 'empty', facts: [], entities: [], config };
   // The reading period comes from the source documents, not a malformed extracted date.
-  return { source: 'live', facts: claims, entities, config,
-    start: day(config.corpus_start || span.start), end: day(config.corpus_end || span.end) };
+  return {
+    source: 'live', facts: claims, entities, config,
+    start: day(config.corpus_start || span.start), end: day(config.corpus_end || span.end)
+  };
 }
 
 function Brand() {
@@ -57,7 +59,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem('chronicle.theme', theme); } catch {}
+    try { localStorage.setItem('chronicle.theme', theme); } catch { }
   }, [theme]);
 
   useEffect(() => {
@@ -92,7 +94,7 @@ export default function App() {
   const entityCount = useMemo(() => mentionedEntities(facts, named).size, [facts, named]);
   const filteredFacts = useMemo(() => facts.filter((f) => filter === 'owns' ? ['owns', 'leads', 'manages', 'maintains'].includes(f.predicate)
     : filter === 'deadline' ? ['deadline', 'due', 'scheduled_for'].includes(f.predicate)
-    : filter === 'history' ? f.valid_to && new Date(f.valid_to) <= asOf : true), [facts, filter, asOf]);
+      : filter === 'history' ? f.valid_to && new Date(f.valid_to) <= asOf : true), [facts, filter, asOf]);
   const cards = useMemo(() => {
     const mentions = mentionedEntities(filteredFacts, named);
     return [...mentions.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({
@@ -146,7 +148,7 @@ export default function App() {
       <footer className="app-footer"><EgressLog /></footer>
       <div className="workspace-footnote"><span>Chronicle · Memory with a sense of time.</span><span>{memory.source === 'live'
         ? memory.config?.chat_enabled === true ? 'Live chat · uses paid model calls' : 'Browse-only demo · chat disabled'
-        : connecting ? 'Connecting to saved memory' : memory.source === 'empty' ? 'No saved memory loaded' : 'Saved memory unavailable'}</span></div>
+        : connecting ? 'Connecting to saved memory, Do not refresh the page' : memory.source === 'empty' ? 'No saved memory loaded' : 'Saved memory unavailable'}</span></div>
     </main>
   </div>;
 }
