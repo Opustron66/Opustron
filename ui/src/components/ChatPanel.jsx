@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from "react";
 import { ask } from "../services/api";
+import Icon from "./Icon";
 
 const fmt = (d) =>
   new Date(d).toLocaleDateString("en-GB", {
     day: "numeric",
     month: "short",
-    year: "2-digit",
+    year: "numeric",
     timeZone: "UTC",
   });
 
@@ -19,7 +20,7 @@ function renderInline(text) {
   ));
 }
 
-export default function ChatPanel({ asOf }) {
+export default function ChatPanel({ asOf, enabled = true, onExplore = () => {} }) {
   const [messages, setMessages] = useState([
     {
       role: "assistant",
@@ -46,6 +47,25 @@ export default function ChatPanel({ asOf }) {
       return updated;
     });
   }, [asOf]);
+
+  if (!enabled) return (
+    <section className="chat-panel chat-preview">
+      <header className="chat-header"><h2 className="chat-title">Ask Chronicle</h2><span className="mode-badge">Browse-only demo</span></header>
+      <div className="chat-preview-body">
+        <span className="assistant-symbol"><Icon name="memory" size={28} /></span>
+        <span className="eyebrow">START WITH A LITTLE CURIOSITY</span>
+        <h2>Good questions.<br />Remembered details.</h2>
+        <p>Live answers are paused in this public demo. There’s still a whole memory to explore.</p>
+        <div className="explore-prompts">
+          <button onClick={() => onExplore('owns')}><Icon name="person" /><span><strong>Who owns what?</strong><small>Explore owners and project leads</small></span><Icon name="arrow" size={16} /></button>
+          <button onClick={() => onExplore('deadline')}><Icon name="clock" /><span><strong>What’s coming up?</strong><small>Find dates, plans, and deadlines</small></span><Icon name="arrow" size={16} /></button>
+          <button onClick={() => onExplore('history')}><Icon name="compare" /><span><strong>What changed along the way?</strong><small>Look back at earlier facts</small></span><Icon name="arrow" size={16} /></button>
+        </div>
+        <div className="browse-reassurance"><Icon name="shield" size={15} /><span>Explore saved evidence. No live AI requests.</span></div>
+      </div>
+      <div className="chat-input-row"><textarea className="chat-input" rows={1} aria-label="Chat unavailable in browse-only demo" placeholder="Live chat is paused in this demo" disabled /><button className="chat-send" aria-label="Send question" disabled><Icon name="arrow" /></button></div>
+    </section>
+  );
 
   const send = async () => {
     const q = input.trim();

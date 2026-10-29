@@ -1,112 +1,128 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import Timeline from "./components/Timeline";
 import EntityCard from "./components/EntityCard";
 import ChatPanel from "./components/ChatPanel";
 import EgressLog from "./components/EgressLog";
-import { MOCK, getEntities, getFacts, getSpan } from "./services/api";
+import DateDiff from "./components/DateDiff";
+import Icon from "./components/Icon";
+import { MOCK, getEntities, getFacts, getSpan, getConfig, isTrueAt } from "./services/api";
+import { formatDay } from "./services/memoryView";
 import "./styles.css";
 
-const SAMPLE = {
-  source: "sample",
-  facts: MOCK.facts,
-  entities: MOCK.entities,
-  start: MOCK.corpusStart,
-  end: MOCK.corpusEnd,
-};
+const SAMPLE = { source: "sample", facts: MOCK.facts, entities: MOCK.entities, start: MOCK.corpusStart, end: MOCK.corpusEnd };
+const day = (iso) => new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+const filters = [['all', 'Everything'], ['owns', 'Ownership'], ['deadline', 'Dates & deadlines'], ['history', 'Past facts']];
 
-const utcDay = (iso) => new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+function mentionedEntities(facts, named) {
+  const mentions = new Map();
+  facts.forEach((f) => {
+    const names = new Set([f.subject]);
+    if (named.has(f.object)) names.add(f.object);
+    names.forEach((name) => mentions.set(name, (mentions.get(name) || 0) + 1));
+  });
+  return mentions;
+}
 
 async function loadMemory() {
-  const [facts, entities, span] = await Promise.all([getFacts(), getEntities(), getSpan()]);
-  // Hermes notes are free text with no subject/object; the cards show claims.
-  const claims = facts.filter((f) => f.subject && f.object);
-  if (!claims.length || !span.start || !span.end) return { source: "empty", facts: [], entities: [] };
-  return { source: "live", facts: claims, entities, start: utcDay(span.start), end: utcDay(span.end) };
+  const [facts, entities, span, config] = await Promise.all([
+    getFacts(), getEntities(), getSpan(), getConfig().catch(() => ({ chat_enabled: false })),
+  ]);
+  const claims = facts.filter((f) => (!f.kind || f.kind === 'claim') && f.subject && f.object);
+  if (!claims.length || !span.start || !span.end) return { source: 'empty', facts: [], entities: [], config };
+  // The reading period comes from the source documents, not a malformed extracted date.
+  return { source: 'live', facts: claims, entities, config,
+    start: day(config.corpus_start || span.start), end: day(config.corpus_end || span.end) };
+}
+
+function Brand() {
+  return <div className="app-logo"><span className="brand-symbol"><Icon name="memory" size={23} /></span><span className="app-title">Chronicle<span className="brand-dot">.</span></span></div>;
+}
+
+function initialTheme() {
+  try { return localStorage.getItem('chronicle.theme') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; }
 }
 
 export default function App() {
   const [memory, setMemory] = useState(SAMPLE);
-  const [asOf, setAsOf] = useState(new Date("2026-05-10"));
+  const [connecting, setConnecting] = useState(true);
+  const [asOf, setAsOf] = useState(new Date('2026-05-10'));
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [selected, setSelected] = useState(null);
+  const [view, setView] = useState('memory');
+  const [visible, setVisible] = useState(60);
+  const [theme, setTheme] = useState(initialTheme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem('chronicle.theme', theme); } catch {}
+  }, [theme]);
 
   useEffect(() => {
     let cancelled = false;
-    loadMemory()
-      .then((loaded) => {
-        if (cancelled) return;
-        setMemory(loaded);
-        if (loaded.source === "live") setAsOf(loaded.end);
-      })
-      .catch(() => {}); // memory server not running: keep the sample data
-    return () => {
-      cancelled = true;
-    };
+    loadMemory().then((loaded) => {
+      if (cancelled) return;
+      setMemory(loaded);
+      if (loaded.source === 'live') setAsOf(loaded.end);
+    }).catch(() => {}).finally(() => { if (!cancelled) setConnecting(false); });
+    return () => { cancelled = true; };
   }, []);
 
   const { facts, entities } = memory;
-  const named = new Map(entities.map((e) => [e.name, e]));
-  const mentions = new Map();
-  facts.forEach((f) => [f.subject, f.object].forEach((n) => mentions.set(n, (mentions.get(n) || 0) + 1)));
-  const cards = [...mentions.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([name]) => named.get(name) || { entity_id: name, name, entity_type: "unknown" });
+  const named = useMemo(() => new Map(entities.map((e) => [e.name, e])), [entities]);
+  const entityCount = useMemo(() => mentionedEntities(facts, named).size, [facts, named]);
+  const filteredFacts = useMemo(() => facts.filter((f) => filter === 'owns' ? ['owns', 'leads', 'manages', 'maintains'].includes(f.predicate)
+    : filter === 'deadline' ? ['deadline', 'due', 'scheduled_for'].includes(f.predicate)
+    : filter === 'history' ? f.valid_to && new Date(f.valid_to) <= asOf : true), [facts, filter, asOf]);
+  const cards = useMemo(() => {
+    const mentions = mentionedEntities(filteredFacts, named);
+    return [...mentions.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({
+      ...(named.get(name) || { entity_id: name, name, entity_type: 'unknown' }), count,
+    }));
+  }, [filteredFacts, named]);
+  const shown = cards.filter((e) => e.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const current = shown.find((e) => e.name === selected) || shown[0];
+  const activeCount = facts.filter((f) => isTrueAt(f, asOf)).length;
+  const sourceCount = memory.config?.document_count || new Set(facts.map((f) => f.doc_id).filter(Boolean)).size;
+  const explore = (key) => { setFilter(key); setQuery(''); setSelected(null); setView('memory'); };
 
-  return (
-    <div className="app">
-      <header className="app-header">
-        <div className="app-logo">
-          <span className="app-logo-mark">◈</span>
-          <span className="app-title">Chronicle</span>
-        </div>
-        <span className="app-tagline">A personal agent whose memory keeps up</span>
-        <div className="app-header-right">
-          <span className={`app-corpus-label source-${memory.source}`}>
-            {memory.source === "live" && `● Live memory · ${facts.length} facts`}
-            {memory.source === "empty" && "● Live memory · no facts yet"}
-            {memory.source === "sample" && "Sample data · memory server not running"}
-          </span>
-        </div>
-      </header>
+  return <div className="app">
+    <header className="app-header"><div className="header-inner"><Brand /><span className="app-tagline">A little context. A longer memory.</span><div className="app-header-right">
+      <span className={`app-corpus-label source-${memory.source}`}><i />{connecting ? 'Connecting to memory' : memory.source === 'live' ? 'Live memory' : memory.source === 'empty' ? 'Waiting for memory' : 'Preview data'}</span>
+      <button className="icon-button theme-toggle" aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></button>
+    </div></div></header>
 
-      {memory.source === "empty" ? (
-        <div className="app-empty">
-          The memory server is running but has no facts yet. Ingest a corpus with{" "}
-          <code>python -m chronicle.ingest --corpus DIR --state DIR</code>, then reload.
-        </div>
-      ) : (
-        <>
-          <div className="app-timeline-section">
-            <Timeline
-              startDate={memory.start}
-              endDate={memory.end}
-              value={asOf}
-              onChange={setAsOf}
-              facts={facts}
-            />
-          </div>
+    <main className="workspace">
+      <section className="workspace-intro"><div><span className="eyebrow">YOUR MEMORY WORKSPACE</span><h1>Connect the dots.<br className="mobile-break" /> Across time.</h1><p>Find the people, decisions, and details. See how the story changed.</p></div><div className="workspace-caption"><Icon name="shield" /><span>Source-backed memory<br /><strong>Every fact has a story.</strong></span></div></section>
+      {!connecting && memory.source === 'sample' && <div className="preview-notice"><span className="notice-dot" /><p><strong>You're exploring a sample.</strong> The saved memory isn't connected yet. These four example facts let you try the interface.</p></div>}
 
-          <div className="app-body">
-            <aside className="app-sidebar">
-              <h2 className="sidebar-title">
-                Entities
-                <span className="sidebar-count">{cards.length}</span>
-              </h2>
-              <div className="entity-list">
-                {cards.map((entity) => (
-                  <EntityCard key={entity.entity_id} entity={entity} allFacts={facts} asOf={asOf} />
-                ))}
-              </div>
-            </aside>
+      {memory.source === 'empty' ? <section className="empty-workspace"><Icon name="memory" size={40} /><h2>Your memory starts here.</h2><p>The service is connected but has no facts yet. Once the saved dataset is added, people, projects, and their history will appear here.</p></section> : <>
+        <section className="overview-strip" aria-label="Memory overview">
+          <div><span className="stat-icon"><Icon name="folder" /></span><span><strong>{sourceCount.toLocaleString()}</strong><small>{memory.source === 'sample' ? 'Example sources' : 'Source documents'}</small></span></div>
+          <div><span className="stat-icon"><Icon name="memory" /></span><span><strong>{facts.length.toLocaleString()}</strong><small>Remembered facts</small></span></div>
+          <div><span className="stat-icon"><Icon name="person" /></span><span><strong>{entityCount.toLocaleString()}</strong><small>People & things</small></span></div>
+          <div className="overview-period"><span className="eyebrow">READING PERIOD</span><strong>{formatDay(memory.start)} <span>—</span> {formatDay(memory.end)}</strong></div>
+        </section>
+        <section className="app-timeline-section"><Timeline startDate={memory.start} endDate={memory.end} value={asOf} onChange={setAsOf} facts={facts} /><div className="timeline-caption"><span><i />{activeCount.toLocaleString()} facts true on this day</span><span>Move through time. The evidence stays.</span></div></section>
 
-            <main className="app-main">
-              <ChatPanel asOf={asOf} />
-            </main>
-          </div>
-        </>
-      )}
-
-      <footer className="app-footer">
-        <EgressLog />
-      </footer>
-    </div>
-  );
+        <div className="workspace-tabs" role="tablist" aria-label="Workspace view"><button role="tab" aria-selected={view === 'memory'} onClick={() => setView('memory')}><Icon name="memory" />Memory explorer</button><button role="tab" aria-selected={view === 'compare'} onClick={() => setView('compare')}><Icon name="compare" />Compare dates</button></div>
+        {view === 'compare' ? <DateDiff key={`${memory.source}-${memory.start}`} facts={facts} startDate={memory.start} endDate={memory.end} /> : <div className="app-body">
+          <aside className="app-sidebar" aria-label="Memory browser"><div className="browser-heading"><h2>People & things</h2><span className="count-pill">{shown.length}</span></div>
+            <label className="entity-search"><Icon name="search" size={16} /><input type="search" aria-label="Search entities" placeholder="Find a person or project…" value={query} onChange={(e) => { setQuery(e.target.value); setVisible(60); }} /></label>
+            <select className="entity-filter" aria-label="Filter memory" value={filter} onChange={(e) => explore(e.target.value)}>{filters.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+            <div className="entity-list">{shown.slice(0, visible).map((entity) => <button className={`entity-option ${current?.name === entity.name ? 'selected' : ''}`} key={entity.entity_id} onClick={() => setSelected(entity.name)} aria-pressed={current?.name === entity.name}><span className={`entity-avatar ${entity.entity_type === 'person' ? 'is-person' : ''}`}><Icon name={entity.entity_type === 'person' ? 'person' : 'folder'} size={16} /></span><span className="entity-option-copy"><strong>{entity.name}</strong><small>{entity.count} {entity.count === 1 ? 'fact' : 'facts'}</small></span><Icon name="chevron" size={14} /></button>)}
+              {!shown.length && <p className="empty-note">No matches. Try another name or filter.</p>}
+              {shown.length > visible && <button className="text-button" onClick={() => setVisible(visible + 60)}>Show more ({shown.length - visible})</button>}
+            </div>
+          </aside>
+          <section className="memory-detail" aria-label="Selected memory"><div className="detail-eyebrow"><span className="eyebrow">THE DETAILS</span><span className="detail-date"><Icon name="clock" size={13} />{formatDay(asOf)}</span></div>
+            {current ? <EntityCard key={current.name} entity={current} allFacts={filteredFacts} asOf={asOf} /> : <div className="detail-empty"><Icon name="search" size={30} /><h3>A little exploring goes a long way.</h3><p>Choose a person or project to see their facts and sources.</p></div>}
+          </section>
+          <section className="app-main"><ChatPanel asOf={asOf} enabled={memory.source === 'live' && memory.config?.chat_enabled === true} onExplore={explore} /></section>
+        </div>}
+      </>}
+      <footer className="app-footer"><EgressLog /></footer>
+      <div className="workspace-footnote"><span>Chronicle · Memory with a sense of time.</span><span>{memory.source === 'sample' ? 'Illustrative sample · not the NVIDIA corpus' : 'Saved evidence · no model calls to browse'}</span></div>
+    </main>
+  </div>;
 }

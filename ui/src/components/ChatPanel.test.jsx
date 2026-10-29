@@ -14,7 +14,7 @@ const askQuestion = async (text) => {
 
 test("header shows the as-of day in UTC", () => {
   render(<ChatPanel asOf={asOf} />);
-  expect(screen.getByText("as of 10 May 26")).toBeInTheDocument();
+  expect(screen.getByText("as of 10 May 2026")).toBeInTheDocument();
 });
 
 test("sends the question with the as-of date", async () => {

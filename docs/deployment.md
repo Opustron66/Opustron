@@ -192,9 +192,17 @@ the total past the limit. A question may involve several model calls. Persist th
 egress log and use provider-side controls where available. Do not run separate
 model jobs against the same budget while hosting the demo.
 
-The UI currently shows its generic error message when chat is disabled or rate
-limited. It does not invent an answer. Chat history/UI improvements in other PRs
-can be integrated separately; the hosted wrapper reuses the memory API router.
+When chat is disabled, the UI shows a browse-only panel with shortcuts to
+ownership, deadlines and past facts. These shortcuts filter saved memory without
+calling a model. When enabled chat fails or is rate limited, it shows an error
+instead of inventing an answer.
+
+The memory workspace has searchable entities, source quotations, a daily timeline
+and a separate date-comparison view. It supports dark and light themes and stacks
+the panels on mobile. The reading period uses dates from the source documents
+when available, so malformed extracted dates do not stretch the timeline. Stored
+claims remain unchanged. `/api/config` exposes only chat availability, document
+count and the source date range; it contains no credentials or snapshot URL.
 
 ## Offline validation
 

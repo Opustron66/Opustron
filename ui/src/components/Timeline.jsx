@@ -1,86 +1,18 @@
 import React, { useMemo } from "react";
 import { isTrueAt } from "../services/api";
+import { formatDay, isoDay } from "../services/memoryView";
+import Icon from "./Icon";
 
-const fmt = (d) =>
-  d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit", timeZone: "UTC" });
-
+const DAY = 86400000;
 export default function Timeline({ startDate, endDate, value, onChange, facts = [] }) {
-  const totalDays = Math.round((endDate - startDate) / 86400000);
-  const currentDay = Math.round((value - startDate) / 86400000);
-  const pct = totalDays > 0 ? (currentDay / totalDays) * 100 : 0;
-
-  // Build tick marks at key fact boundaries
-  const ticks = useMemo(() => {
-    const dates = new Set();
-    facts.forEach((f) => {
-      if (f.valid_from) dates.add(f.valid_from.slice(0, 10));
-      if (f.valid_to) dates.add(f.valid_to.slice(0, 10));
-    });
-    return [...dates]
-      .map((d) => new Date(d))
-      .filter((d) => d >= startDate && d <= endDate)
-      .map((d) => ({
-        date: d,
-        pct: ((d - startDate) / (endDate - startDate)) * 100,
-        label: fmt(d),
-      }));
-  }, [facts, startDate, endDate]);
-
-  const handleChange = (e) => {
-    const days = Number(e.target.value);
-    const date = new Date(startDate.getTime() + days * 86400000);
-    onChange(date);
-  };
-
-  return (
-    <div className="timeline-wrap">
-      <div className="timeline-header">
-        <span className="timeline-label">Memory Time Machine</span>
-        <span className="timeline-date">{fmt(value)}</span>
-      </div>
-
-      <div className="timeline-track-wrap">
-        <span className="timeline-bound">{fmt(startDate)}</span>
-        <div className="timeline-track">
-          <div className="timeline-fill" style={{ width: `${pct}%` }} />
-          {ticks.map((t) => (
-            <div
-              key={t.label}
-              className="timeline-tick"
-              style={{ left: `${t.pct}%` }}
-              title={t.label}
-            />
-          ))}
-          <input
-            type="range"
-            min={0}
-            max={totalDays}
-            value={currentDay}
-            onChange={handleChange}
-            className="timeline-slider"
-            aria-label="Select date in memory"
-          />
-        </div>
-        <span className="timeline-bound">{fmt(endDate)}</span>
-      </div>
-
-      <div className="timeline-facts">
-        {facts.map((f) => {
-          const from = f.valid_from ? new Date(f.valid_from) : startDate;
-          const to = f.valid_to ? new Date(f.valid_to) : endDate;
-          const isActive = isTrueAt(f, value);
-          const fromPct = Math.max(0, ((from - startDate) / (endDate - startDate)) * 100);
-          const toPct = Math.min(100, ((to - startDate) / (endDate - startDate)) * 100);
-          return (
-            <div
-              key={f.fact_id}
-              className={`timeline-fact-bar ${isActive ? "active" : "inactive"}`}
-              style={{ left: `${fromPct}%`, width: `${toPct - fromPct}%` }}
-              title={`${f.subject} — ${f.predicate}: ${f.object} (${f.valid_from} → ${f.valid_to ?? "now"})`}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
+  const totalDays = Math.max(0, Math.round((endDate - startDate) / DAY));
+  const currentDay = Math.min(totalDays, Math.max(0, Math.round((value - startDate) / DAY)));
+  const pct = totalDays ? currentDay / totalDays * 100 : 0;
+  const ticks = useMemo(() => [...new Set(facts.flatMap((f) => [f.valid_from, f.valid_to]).filter(Boolean).map((d) => d.slice(0, 10)))].sort().filter((d) => new Date(d) >= startDate && new Date(d) <= endDate), [facts, startDate, endDate]);
+  const changeDay = (offset) => onChange(new Date(startDate.getTime() + Math.min(totalDays, Math.max(0, offset)) * DAY));
+  return <div className="timeline-wrap">
+    <div className="timeline-header"><div className="timeline-heading"><Icon name="clock" size={18} /><span className="timeline-label">Memory Time Machine</span><span className="timeline-helper">A different day. A different perspective.</span></div><div className="timeline-date-controls"><button aria-label="Previous day" className="icon-button" disabled={!currentDay} onClick={() => changeDay(currentDay - 1)}>←</button><label className="timeline-date"><span>{formatDay(value)}</span><input type="date" aria-label="Choose exact memory date" min={isoDay(startDate)} max={isoDay(endDate)} value={isoDay(value)} onChange={(e) => { if (!e.target.value) return; const date = new Date(`${e.target.value}T00:00:00Z`); if (date >= startDate && date <= endDate) onChange(date); }} /></label><button aria-label="Next day" className="icon-button" disabled={currentDay >= totalDays} onClick={() => changeDay(currentDay + 1)}>→</button></div></div>
+    <div className="timeline-track-wrap"><span className="timeline-bound">{formatDay(startDate)}</span><div className="timeline-track"><div className="timeline-fill" style={{ width: `${pct}%` }} />{ticks.filter((_, i) => i % Math.max(1, Math.ceil(ticks.length / 18)) === 0).map((date) => <span key={date} className="timeline-tick" title={formatDay(date)} style={{ left: `${totalDays ? (new Date(date) - startDate) / (endDate - startDate) * 100 : 0}%` }} />)}<input type="range" min={0} max={totalDays} value={currentDay} aria-label="Select date in memory" aria-valuetext={formatDay(value)} onChange={(e) => changeDay(Number(e.target.value))} className="timeline-slider" /></div><span className="timeline-bound">{formatDay(endDate)}</span></div>
+    <div className="timeline-facts" aria-hidden="true">{facts.slice(0, 120).map((f) => <span key={f.fact_id} className={`timeline-fact-bar ${isTrueAt(f, value) ? 'active' : 'inactive'}`} title={`${f.subject} — ${f.predicate}: ${f.object}`} />)}</div>
+  </div>;
 }

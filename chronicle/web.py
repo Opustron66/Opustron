@@ -1,6 +1,7 @@
 """Hosted UI and API: ``python -m chronicle.web`` (no ingestion on startup)."""
 
 import asyncio
+import json
 import math
 import os
 import time
@@ -43,6 +44,21 @@ def create_app() -> FastAPI:
     if snapshot_url or snapshot_sha:
         state = restore_snapshot(state, snapshot_url, snapshot_sha)
     memory = MemoryAPI.from_state(state)
+    document_count, document_dates = 0, []
+    documents = state / "docs.jsonl"
+    if documents.is_file():
+        from datetime import date
+
+        with documents.open(encoding="utf-8") as lines:
+            for line in lines:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                document_count += 1
+                try:
+                    document_dates.append(date.fromisoformat(str(row.get("date", ""))[:10]).isoformat())
+                except ValueError:
+                    pass
 
     @asynccontextmanager
     async def lifespan(app):
@@ -89,6 +105,12 @@ def create_app() -> FastAPI:
     @app.get("/api/egress")
     def egress(n: int = 30):
         return get_logger().tail(max(1, min(n, 500)))
+
+    @app.get("/api/config")
+    def config():
+        return {"chat_enabled": chat, "document_count": document_count or None,
+                "corpus_start": min(document_dates, default=None),
+                "corpus_end": max(document_dates, default=None)}
 
     app.include_router(router(memory), prefix="/api")
     app.mount("/", StaticFiles(directory=static, html=True), name="ui")

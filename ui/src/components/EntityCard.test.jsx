@@ -40,8 +40,8 @@ test("predicates with underscores read as words", () => {
 
 test("validity dates display the stored day, not the day before", () => {
   renderCard("payments service", "2026-05-20");
-  expect(screen.getByText("1 May → 15 May")).toBeInTheDocument();
-  expect(screen.getByText("15 May → now")).toBeInTheDocument();
+  expect(screen.getByText("1 May 2026 → 15 May 2026")).toBeInTheDocument();
+  expect(screen.getByText("15 May 2026 → now")).toBeInTheDocument();
 });
 
 test("an unknown start date says so", () => {

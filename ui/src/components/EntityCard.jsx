@@ -4,7 +4,7 @@ import { factsAbout, hasEndedBy, isTrueAt } from "../services/api";
 
 const fmt = (d, missing) =>
   d
-    ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })
+    ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
     : missing;
 
 const words = (predicate) => predicate.replaceAll("_", " ");
@@ -29,7 +29,7 @@ export default function EntityCard({ entity, allFacts, asOf }) {
   return (
     <article className="entity-card">
       <header className="entity-card-header">
-        <span className="entity-type-badge">{entity.entity_type}</span>
+        <span className="entity-type-badge">{entity.entity_type === 'unknown' ? 'Entity' : entity.entity_type}</span>
         <h3 className="entity-name">{entity.name}</h3>
       </header>
 
@@ -62,7 +62,7 @@ export default function EntityCard({ entity, allFacts, asOf }) {
                         }
                         aria-label={`Source: ${f.doc_id}`}
                       >
-                        {f.doc_id}
+                        View source ↗
                       </button>
                       {openCitation === f.fact_id && (
                         <CitationPopover

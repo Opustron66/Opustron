@@ -17,9 +17,9 @@ const renderTimeline = (props = {}) =>
 
 test("shows the selected day and the corpus bounds in UTC", () => {
   renderTimeline();
-  expect(screen.getByText("10 May 26")).toBeInTheDocument();
-  expect(screen.getByText("16 Apr 26")).toBeInTheDocument();
-  expect(screen.getByText("27 May 26")).toBeInTheDocument();
+  expect(screen.getByText("10 May 2026")).toBeInTheDocument();
+  expect(screen.getByText("16 Apr 2026")).toBeInTheDocument();
+  expect(screen.getByText("27 May 2026")).toBeInTheDocument();
 });
 
 test("moving the slider reports the matching date", () => {

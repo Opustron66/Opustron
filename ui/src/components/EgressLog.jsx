@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { getEgressLog, MOCK } from "../services/api";
+import { getEgressLog } from "../services/api";
+import Icon from "./Icon";
 
 const fmtTs = (ts) =>
   new Date(ts).toLocaleTimeString("en-GB", {
@@ -12,10 +13,8 @@ const destination = (e) =>
   e.provider === "tavily" ? "Tavily search" : (e.model || e.provider || "unknown").split("/").pop();
 
 export default function EgressLog() {
-  const [entries, setEntries] = useState(MOCK.egressEntries);
-  // "sample": never reached the server, showing made-up entries.
-  // "offline": reached it before, still showing the last real entries.
-  const [status, setStatus] = useState("sample");
+  const [entries, setEntries] = useState([]);
+  const [status, setStatus] = useState("connecting");
 
   useEffect(() => {
     let cancelled = false;
@@ -27,7 +26,7 @@ export default function EgressLog() {
           setStatus("live");
         }
       } catch {
-        if (!cancelled) setStatus((s) => (s === "sample" ? "sample" : "offline"));
+        if (!cancelled) setStatus("offline");
       }
     };
     poll();
@@ -39,20 +38,22 @@ export default function EgressLog() {
   }, []);
 
   return (
-    <section className="egress-log">
-      <header className="egress-header">
+    <details className="egress-log">
+      <summary className="egress-header">
+        <Icon name="activity" size={17} />
         <h2 className="egress-title">Egress Log</h2>
         <span className={`egress-status ${status}`}>
-          {{ live: "● LIVE", offline: "offline", sample: "sample data" }[status]}
+          {{ live: "● LIVE", offline: "offline", connecting: "connecting" }[status]}
         </span>
         <span className="egress-subtitle">
           Everything that left this machine: model calls and web searches, as sent
         </span>
-      </header>
+        <span className="egress-expand">{entries.length} entries · Expand</span>
+      </summary>
 
       <div className="egress-entries">
         {entries.length === 0 && (
-          <p className="egress-empty">Nothing has left this machine yet.</p>
+          <p className="egress-empty">{status === 'live' ? 'Nothing has left this machine yet.' : 'The activity log is not connected. No sample requests are shown.'}</p>
         )}
         {entries.map((e, i) => (
           <div
@@ -85,6 +86,6 @@ export default function EgressLog() {
           </div>
         ))}
       </div>
-    </section>
+    </details>
   );
 }
