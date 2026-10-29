@@ -190,7 +190,7 @@ def test_public_config_reports_chat_and_source_dates_without_secrets(setup, monk
         assert "not-for-the-browser" not in response.text
 
 
-def test_ephemeral_chat_accepts_a_verified_remote_budget(setup, monkeypatch):
+def test_ephemeral_chat_validates_remote_configuration_without_network_at_startup(setup, monkeypatch):
     monkeypatch.setenv("CHRONICLE_WEB_EPHEMERAL", "1")
     monkeypatch.setenv("CHRONICLE_WEB_CHAT_ENABLED", "1")
     monkeypatch.setenv("CHRONICLE_SPEND_BACKEND", "upstash")
@@ -200,7 +200,7 @@ def test_ephemeral_chat_accepts_a_verified_remote_budget(setup, monkeypatch):
     monkeypatch.setattr("chronicle.web.remote_budget.RemoteBudget", Mock(return_value=ledger))
     with TestClient(create_app()) as client:
         assert client.get("/api/config").json()["chat_enabled"] is True
-    ledger.status.assert_called_once()
+    ledger.status.assert_not_called()
 
 
 def test_disabled_chat_does_not_contact_remote_budget(setup, monkeypatch):
@@ -213,7 +213,7 @@ def test_disabled_chat_does_not_contact_remote_budget(setup, monkeypatch):
     ledger.assert_not_called()
 
 
-def test_unavailable_remote_budget_stops_chat_startup(setup, monkeypatch):
+def test_unavailable_remote_budget_keeps_browsing_up_and_blocks_paid_chat(setup, monkeypatch):
     from chronicle.guard.remote_budget import BudgetUnavailable
 
     monkeypatch.setenv("CHRONICLE_WEB_EPHEMERAL", "1")
@@ -224,8 +224,12 @@ def test_unavailable_remote_budget_stops_chat_startup(setup, monkeypatch):
     ledger = Mock()
     ledger.status.side_effect = BudgetUnavailable("missing ledger")
     monkeypatch.setattr("chronicle.web.remote_budget.RemoteBudget", Mock(return_value=ledger))
-    with pytest.raises(BudgetUnavailable):
-        create_app()
+    monkeypatch.setattr("chronicle.memory.server.answer_question", Mock(side_effect=BudgetUnavailable("offline")))
+    with TestClient(create_app()) as client:
+        assert client.get("/healthz").status_code == 200
+        assert client.get("/api/facts").status_code == 200
+        assert client.post("/api/ask", json={"question": "Who owns billing?"}).status_code == 503
+    ledger.status.assert_not_called()
 
 
 def test_exhausted_budget_does_not_prevent_memory_browsing(setup, monkeypatch):

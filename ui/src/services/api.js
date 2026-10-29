@@ -1,7 +1,7 @@
 const BASE = "/api";
 
-async function get(path) {
-  const res = await fetch(`${BASE}${path}`);
+async function get(path, options) {
+  const res = await (options ? fetch(`${BASE}${path}`, options) : fetch(`${BASE}${path}`));
   if (!res.ok) throw Object.assign(new Error(`${res.status} ${path}`), { status: res.status });
   return res.json();
 }
@@ -17,12 +17,12 @@ async function post(path, body) {
 }
 
 // P2 memory store (python -m chronicle.memory serve --state DIR)
-export const getEntities = () => get("/entities");
+export const getEntities = (options) => get("/entities", options);
 export const getEntityHistory = (id) => get(`/entities/${id}/history`);
-export const getFacts = () => get("/facts"); // every fact, superseded included
+export const getFacts = (options) => get("/facts", options); // every fact, superseded included
 export const getFactsAsOf = (isoDate) => get(`/facts?as_of=${isoDate}`);
-export const getSpan = () => get("/span");
-export const getConfig = () => get("/config");
+export const getSpan = (options) => get("/span", options);
+export const getConfig = (options) => get("/config", options);
 export const getTimeline = (start, end) =>
   get(`/timeline?start=${start}&end=${end}`);
 
