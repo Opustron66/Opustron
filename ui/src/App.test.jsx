@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 import App from "./App";
@@ -20,18 +20,84 @@ const live = {
   '/api/config': { chat_enabled: false, document_count: 425 },
 };
 
-test('offline preview is labelled and the selected entity follows the date', async () => {
+test('a failed backend request shows a connection error instead of four sample facts', async () => {
   serve({});
-  const { container } = render(<App />);
-  expect(await screen.findByText('Preview data')).toBeInTheDocument();
-  expect(screen.getByText(/four example facts/)).toBeInTheDocument();
-  await userEvent.click(within(screen.getByLabelText('Memory browser')).getByRole('button', { name: /payments service/ }));
-  const detail = within(screen.getByLabelText('Selected memory'));
-  expect(detail.getByText('Alice Chen').closest('.fact-row')).toHaveClass('fact-current');
-  fireEvent.change(screen.getByLabelText('Select date in memory'), { target: { value: '34' } });
-  expect(container.querySelector('.timeline-date')).toHaveTextContent('20 May 2026');
-  expect(detail.getByText('Alice Chen').closest('.fact-row')).toHaveClass('fact-superseded');
-  expect(detail.getByText('Bob Nakamura').closest('.fact-row')).toHaveClass('fact-current');
+  render(<App />);
+  expect(await screen.findByText('Memory unavailable')).toBeInTheDocument();
+  expect(screen.getByText('Saved memory is temporarily unavailable.')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Memory browser')).not.toBeInTheDocument();
+  expect(screen.queryByText('Alice Chen')).not.toBeInTheDocument();
+  expect(screen.queryByText('Browse-only demo')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Retry connection' })).toBeEnabled();
+});
+
+test('a delayed backend never renders sample facts while loading', async () => {
+  serve({});
+  vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+  const { unmount } = render(<App />);
+  expect(screen.getByText('Connecting to saved memory…')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Memory browser')).not.toBeInTheDocument();
+  unmount();
+});
+
+test('retry restores the real corpus and its actual chat configuration', async () => {
+  serve({});
+  render(<App />);
+  await screen.findByText('Memory unavailable');
+  serve({ ...live, '/api/config': { chat_enabled: true, document_count: 425 } });
+  await userEvent.click(screen.getByRole('button', { name: 'Retry connection' }));
+  await screen.findByText('Live memory');
+  expect(screen.getByText('425')).toBeInTheDocument();
+  expect(screen.getByLabelText('Ask a question')).toBeEnabled();
+});
+
+test('temporary configuration failure does not falsely report chat as disabled', async () => {
+  const spy = serve({ ...live, '/api/config': undefined });
+  spy.mockImplementation(async (url) => {
+    const path = url.split('?')[0];
+    if (path === '/api/config') throw new Error('502');
+    return { ok: true, json: async () => live[path] || [] };
+  });
+  render(<App />);
+  await screen.findByText('Memory unavailable');
+  expect(screen.queryByText('Browse-only demo')).not.toBeInTheDocument();
+  expect(screen.queryByText('Live memory')).not.toBeInTheDocument();
+});
+
+test('a transient request failure reconnects automatically', async () => {
+  vi.useFakeTimers();
+  try {
+    serve({});
+    render(<App />);
+    await act(async () => {});
+    expect(screen.getByText('Memory unavailable')).toBeInTheDocument();
+    serve(live);
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(screen.getByText('Live memory')).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('automatic retries stop after four attempts and never call chat', async () => {
+  vi.useFakeTimers();
+  try {
+    const spy = serve({});
+    render(<App />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(spy.mock.calls.filter(([url]) => url === '/api/facts')).toHaveLength(4);
+    expect(spy.mock.calls.some(([url]) => url === '/api/ask')).toBe(false);
+    expect(screen.getByText('Memory unavailable')).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('a successful empty response is distinct from a connection failure', async () => {
+  serve({ '/api/facts': [], '/api/entities': [], '/api/span': { start: null, end: null }, '/api/config': { chat_enabled: false } });
+  render(<App />);
+  await screen.findByText('Waiting for memory');
+  expect(screen.queryByText('Memory unavailable')).not.toBeInTheDocument();
 });
 
 test('live memory uses real facts and explains that paid chat is paused', async () => {
@@ -71,7 +137,7 @@ test('literal claim values are not presented as people or projects', async () =>
 });
 
 test('empty saved memory has a visitor-friendly message and no slider', async () => {
-  serve({ '/api/facts': [], '/api/entities': [], '/api/span': { start: null, end: null } });
+  serve({ '/api/facts': [], '/api/entities': [], '/api/span': { start: null, end: null }, '/api/config': { chat_enabled: false } });
   render(<App />);
   expect(await screen.findByText('Waiting for memory')).toBeInTheDocument();
   expect(screen.getByText('Your memory starts here.')).toBeInTheDocument();

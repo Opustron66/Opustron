@@ -5,11 +5,11 @@ import ChatPanel from "./components/ChatPanel";
 import EgressLog from "./components/EgressLog";
 import DateDiff from "./components/DateDiff";
 import Icon from "./components/Icon";
-import { MOCK, getEntities, getFacts, getSpan, getConfig, isTrueAt } from "./services/api";
+import { getEntities, getFacts, getSpan, getConfig, isTrueAt } from "./services/api";
 import { formatDay } from "./services/memoryView";
 import "./styles.css";
 
-const SAMPLE = { source: "sample", facts: MOCK.facts, entities: MOCK.entities, start: MOCK.corpusStart, end: MOCK.corpusEnd };
+const INITIAL = { source: 'loading', facts: [], entities: [] };
 const day = (iso) => new Date(`${iso.slice(0, 10)}T00:00:00Z`);
 const filters = [['all', 'Everything'], ['owns', 'Ownership'], ['deadline', 'Dates & deadlines'], ['history', 'Past facts']];
 
@@ -23,9 +23,9 @@ function mentionedEntities(facts, named) {
   return mentions;
 }
 
-async function loadMemory() {
+async function loadMemory(signal) {
   const [facts, entities, span, config] = await Promise.all([
-    getFacts(), getEntities(), getSpan(), getConfig().catch(() => ({ chat_enabled: false })),
+    getFacts({ signal }), getEntities({ signal }), getSpan({ signal }), getConfig({ signal }),
   ]);
   const claims = facts.filter((f) => (!f.kind || f.kind === 'claim') && f.subject && f.object);
   if (!claims.length || !span.start || !span.end) return { source: 'empty', facts: [], entities: [], config };
@@ -43,8 +43,9 @@ function initialTheme() {
 }
 
 export default function App() {
-  const [memory, setMemory] = useState(SAMPLE);
+  const [memory, setMemory] = useState(INITIAL);
   const [connecting, setConnecting] = useState(true);
+  const [reload, setReload] = useState(0);
   const [asOf, setAsOf] = useState(new Date('2026-05-10'));
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
@@ -60,13 +61,30 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    loadMemory().then((loaded) => {
+    let retryTimer, controller, timeout;
+    async function attempt(number = 0) {
       if (cancelled) return;
-      setMemory(loaded);
-      if (loaded.source === 'live') setAsOf(loaded.end);
-    }).catch(() => {}).finally(() => { if (!cancelled) setConnecting(false); });
-    return () => { cancelled = true; };
-  }, []);
+      setConnecting(true);
+      controller = new AbortController();
+      timeout = setTimeout(() => controller.abort(), 20000);
+      try {
+        const loaded = await loadMemory(controller.signal);
+        if (cancelled) return;
+        setMemory(loaded);
+        if (loaded.source === 'live') setAsOf(loaded.end);
+      } catch {
+        if (cancelled) return;
+        setMemory((previous) => previous.source === 'live' ? previous : { ...INITIAL, source: 'error' });
+        if (number < 3) retryTimer = setTimeout(() => attempt(number + 1), [2000, 5000, 10000][number]);
+      } finally {
+        clearTimeout(timeout);
+        controller.abort();
+        if (!cancelled) setConnecting(false);
+      }
+    }
+    attempt();
+    return () => { cancelled = true; clearTimeout(retryTimer); clearTimeout(timeout); controller?.abort(); };
+  }, [reload]);
 
   const { facts, entities } = memory;
   const named = useMemo(() => new Map(entities.map((e) => [e.name, e])), [entities]);
@@ -88,17 +106,19 @@ export default function App() {
 
   return <div className="app">
     <header className="app-header"><div className="header-inner"><Brand /><span className="app-tagline">A little context. A longer memory.</span><div className="app-header-right">
-      <span className={`app-corpus-label source-${memory.source}`}><i />{connecting ? 'Connecting to memory' : memory.source === 'live' ? 'Live memory' : memory.source === 'empty' ? 'Waiting for memory' : 'Preview data'}</span>
+      <span className={`app-corpus-label source-${memory.source}`}><i />{connecting ? 'Connecting to memory' : memory.source === 'live' ? 'Live memory' : memory.source === 'empty' ? 'Waiting for memory' : 'Memory unavailable'}</span>
       <button className="icon-button theme-toggle" aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></button>
     </div></div></header>
 
     <main className="workspace">
       <section className="workspace-intro"><div><span className="eyebrow">YOUR MEMORY WORKSPACE</span><h1>Connect the dots.<br className="mobile-break" /> Across time.</h1><p>Find the people, decisions, and details. See how the story changed.</p></div><div className="workspace-caption"><Icon name="shield" /><span>Source-backed memory<br /><strong>Every fact has a story.</strong></span></div></section>
-      {!connecting && memory.source === 'sample' && <div className="preview-notice"><span className="notice-dot" /><p><strong>You're exploring a sample.</strong> The saved memory isn't connected yet. These four example facts let you try the interface.</p></div>}
-
-      {memory.source === 'empty' ? <section className="empty-workspace"><Icon name="memory" size={40} /><h2>Your memory starts here.</h2><p>The service is connected but has no facts yet. Once the saved dataset is added, people, projects, and their history will appear here.</p></section> : <>
+      {['loading', 'error'].includes(memory.source) ? <section className="empty-workspace connection-state" aria-live="polite" aria-busy={connecting}>
+        <Icon name="memory" size={40} /><h2>{connecting ? 'Connecting to saved memory…' : 'Saved memory is temporarily unavailable.'}</h2>
+        <p>{connecting ? 'Waiting for the service to respond. No sample facts are shown.' : 'A memory request failed. This does not mean your corpus was deleted. We retry briefly; you can also reconnect below.'}</p>
+        <button className="text-button" onClick={() => setReload((value) => value + 1)} disabled={connecting}>Retry connection</button>
+      </section> : memory.source === 'empty' ? <section className="empty-workspace"><Icon name="memory" size={40} /><h2>Your memory starts here.</h2><p>The service is connected but has no facts yet. Once the saved dataset is added, people, projects, and their history will appear here.</p></section> : <>
         <section className="overview-strip" aria-label="Memory overview">
-          <div><span className="stat-icon"><Icon name="folder" /></span><span><strong>{sourceCount.toLocaleString()}</strong><small>{memory.source === 'sample' ? 'Example sources' : 'Source documents'}</small></span></div>
+          <div><span className="stat-icon"><Icon name="folder" /></span><span><strong>{sourceCount.toLocaleString()}</strong><small>Source documents</small></span></div>
           <div><span className="stat-icon"><Icon name="memory" /></span><span><strong>{facts.length.toLocaleString()}</strong><small>Remembered facts</small></span></div>
           <div><span className="stat-icon"><Icon name="person" /></span><span><strong>{entityCount.toLocaleString()}</strong><small>People & things</small></span></div>
           <div className="overview-period"><span className="eyebrow">READING PERIOD</span><strong>{formatDay(memory.start)} <span>—</span> {formatDay(memory.end)}</strong></div>
@@ -122,7 +142,7 @@ export default function App() {
         </div>}
       </>}
       <footer className="app-footer"><EgressLog /></footer>
-      <div className="workspace-footnote"><span>Chronicle · Memory with a sense of time.</span><span>{memory.source === 'sample' ? 'Illustrative sample · not the NVIDIA corpus' : 'Saved evidence · no model calls to browse'}</span></div>
+      <div className="workspace-footnote"><span>Chronicle · Memory with a sense of time.</span><span>Saved evidence · no model calls to browse</span></div>
     </main>
   </div>;
 }

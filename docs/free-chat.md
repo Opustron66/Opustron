@@ -76,9 +76,11 @@ limits can truncate reasoning and trigger additional answer attempts.
 
 Enter `NEBIUS_API_KEY` privately in Render and use
 `NEBIUS_BASE_URL=https://api.tokenfactory.nebius.com/v1/`.
-Then set `CHRONICLE_WEB_CHAT_ENABLED=1` and save/redeploy. Startup checks the
-existing ledger; it does not initialize, replenish, or reset it and does not
-call a model. Asking a question can incur charges. The UI should switch from
+Then set `CHRONICLE_WEB_CHAT_ENABLED=1` and save/redeploy. Startup validates the
+configuration locally. Every actual provider attempt must first reserve funds
+against the existing remote ledger; it is never initialized, replenished or reset
+by startup. A temporary Redis outage blocks model calls without preventing memory
+browsing from starting. Asking a question can incur charges. The UI should switch from
 the browse-only panel to live chat.
 
 Start with one known question and inspect the answer's sources and the budget

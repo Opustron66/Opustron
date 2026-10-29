@@ -39,7 +39,9 @@ def create_app() -> FastAPI:
         if not (os.environ.get("NEBIUS_API_KEY") or os.environ.get("OPENAI_API_KEY")):
             raise ValueError("Configure a model API key before enabling chat")
         if remote_budget.enabled():
-            remote_budget.RemoteBudget().status()
+            # Validate configuration here; authorize against the remote ledger before
+            # every actual model attempt. A Redis outage must not take browsing down.
+            remote_budget.RemoteBudget()
 
     state = Path(os.environ.get("CHRONICLE_STATE_DIR", "data/hosted-state"))
     snapshot_url = os.environ.get("CHRONICLE_STATE_SNAPSHOT_URL", "")
