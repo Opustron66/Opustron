@@ -294,6 +294,10 @@ def answer_question(question: str, state: str | Path | MemoryAPI, *, as_of: date
         whole = (lambda items: [replace(e, text=expand(e.text, first_names)) for e in items]
                  ) if first_names else (lambda items: items)
         evidence = whole(evidence)
+        if first_names:
+            # The question too: with "Jordan" in the question and "Jordan Kim" in the evidence, the
+            # two got different stand-ins and run 10 answered "the corpus does not record Jordan".
+            plan = replace(plan, question=expand(plan.question, first_names))
         tools = Tools(search=lambda queries: whole(search_more(plan, memory, queries, path)),
                       open=lambda doc_ids: whole(open_documents(plan, memory, doc_ids, path))) if agentic_enabled() else None
         result = generate_answer(plan, evidence, tools)

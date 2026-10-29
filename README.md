@@ -423,9 +423,11 @@ out in full ("Jin Oh.") when exactly one known person has it. Known people are t
 `roster.json` plus every full name written as an email sender or recipient or a chat speaker in the
 state's `docs.jsonl`; a capitalised word right before the pair ("Platform Eng Ops") marks a team, not
 a person. With names masked, the evidence is written out the same way before the model sees it, so
-"Rohan" and "Rohan Dasgupta" share one stand-in instead of two. The privacy-on run 9 scored 0.898
+"Rohan" and "Rohan Dasgupta" share one stand-in instead of two; the question is written out the same
+way, or its "Jordan" and the evidence's "Jordan Kim" get different stand-ins (run 10 then answered
+"the corpus does not record Jordan"). The privacy-on run 9 scored 0.898
 against 0.957 with privacy off; it answered "Jin." and "Sam." where privacy-off runs said "Jin Oh."
-and "Sam Iverson.", and refused "who leads Project Beacon".
+and "Sam Iverson.", and refused "who leads Project Beacon". With the fix, the privacy-on run 10 scored 0.946 (176/186).
 
 **Both numbers.** When the question asks for both numbers and the answer gives fewer than two
 figures (beyond any in the question; dates, times and durations like "24h" don't count, and
