@@ -2,13 +2,12 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import EgressLog from "./EgressLog";
 
-test("shows mock entries labelled as sample data when the egress server is down", async () => {
+test("an unavailable log never invents outgoing requests", async () => {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
   render(<EgressLog />);
-  expect(await screen.findByText("Who owned ORG_1_service on 3 May?")).toBeInTheDocument();
-  expect(screen.getByText("🔒 redacted")).toBeInTheDocument();
-  expect(screen.getByText("✓ clean")).toBeInTheDocument();
-  expect(screen.getByText("sample data")).toBeInTheDocument();
+  expect(await screen.findByText("offline")).toBeInTheDocument();
+  expect(screen.queryByText("Who owned ORG_1_service on 3 May?")).not.toBeInTheDocument();
+  expect(screen.getByText(/No sample requests are shown/)).toBeInTheDocument();
   expect(screen.queryByText("● LIVE")).not.toBeInTheDocument();
 });
 

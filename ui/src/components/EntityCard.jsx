@@ -1,9 +1,12 @@
 import React, { useState } from "react";
-import { factsAbout, hasEndedBy, isTrueAt } from "../services/api";
-import { fmtDate } from "../services/dates";
+import CitationPopover from "./CitationPopover";
 import { describeStatusAt, describeValidity, humanizeFact } from "../services/humanize";
+import { factsAbout, hasEndedBy, isTrueAt } from "../services/api";
 
-const fmt = (d, missing) => (d ? fmtDate(d) : missing);
+const fmt = (d, missing) =>
+  d
+    ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
+    : missing;
 
 const words = (predicate) => predicate.replace(/^attr:/, "").replaceAll("_", " ");
 
@@ -16,7 +19,8 @@ function groupFor(entityName, fact) {
 }
 
 export default function EntityCard({ entity, allFacts, asOf }) {
-  const [open, setOpen] = useState(null);
+  const [openCitation, setOpenCitation] = useState(null);
+  const [openExplanation, setOpenExplanation] = useState(null);
 
   const groups = {};
   factsAbout(allFacts, entity.name).forEach((f) => {
@@ -27,7 +31,7 @@ export default function EntityCard({ entity, allFacts, asOf }) {
   return (
     <article className="entity-card">
       <header className="entity-card-header">
-        <span className="entity-type-badge">{entity.entity_type}</span>
+        <span className="entity-type-badge">{entity.entity_type === 'unknown' ? 'Entity' : entity.entity_type}</span>
         <h3 className="entity-name">{entity.name}</h3>
       </header>
 
@@ -43,35 +47,37 @@ export default function EntityCard({ entity, allFacts, asOf }) {
                 {sorted.map(({ fact: f, other }) => {
                   const isCurrent = isTrueAt(f, asOf);
                   const isSuperseded = hasEndedBy(f, asOf);
-                  const expanded = open === f.fact_id;
-                  const explainId = `explain-${f.fact_id}`;
 
                   return (
                     <div
                       key={f.fact_id}
                       className={`fact-row ${isCurrent ? "fact-current" : ""} ${isSuperseded ? "fact-superseded" : ""}`}
                     >
-                      <button
-                        type="button"
-                        className="fact-toggle"
-                        aria-expanded={expanded}
-                        aria-controls={explainId}
-                        title="What does this mean?"
-                        onClick={() => setOpen(expanded ? null : f.fact_id)}
-                      >
-                        <span className="fact-object">{other}</span>
-                        <span className="fact-validity">
-                          {fmt(f.valid_from, "unknown")} → {fmt(f.valid_to, "now")}
-                        </span>
-                        <span className="fact-chevron" aria-hidden="true">{expanded ? "−" : "+"}</span>
+                      <button type="button" className="fact-toggle" title="What does this mean?"
+                        aria-expanded={openExplanation === f.fact_id} aria-controls={`explain-${f.fact_id}`}
+                        onClick={() => setOpenExplanation(openExplanation === f.fact_id ? null : f.fact_id)}>
+                        <span className="fact-object">{other}</span><span aria-hidden="true">{openExplanation === f.fact_id ? '−' : '+'}</span>
                       </button>
-                      {expanded && (
-                        <div className="fact-explain" id={explainId}>
-                          <p>{humanizeFact(f)}</p>
-                          <p className="fact-explain-dates">
-                            {describeValidity(f)} {describeStatusAt(f, asOf)}
-                          </p>
-                        </div>
+                      {openExplanation === f.fact_id && <div className="fact-explain" id={`explain-${f.fact_id}`}>
+                        <p>{humanizeFact(f)}</p><p className="fact-explain-dates">{describeValidity(f)} {describeStatusAt(f, asOf)}</p>
+                      </div>}
+                      <span className="fact-validity">
+                        {fmt(f.valid_from, "unknown")} → {fmt(f.valid_to, "now")}
+                      </span>
+                      <button
+                        className="citation-btn"
+                        onClick={() =>
+                          setOpenCitation(openCitation === f.fact_id ? null : f.fact_id)
+                        }
+                        aria-label={`Source: ${f.doc_id}`}
+                      >
+                        View source ↗
+                      </button>
+                      {openCitation === f.fact_id && (
+                        <CitationPopover
+                          source={{ uri: f.doc_id, quote: f.quote }}
+                          onClose={() => setOpenCitation(null)}
+                        />
                       )}
                     </div>
                   );

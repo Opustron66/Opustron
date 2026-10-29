@@ -1,102 +1,18 @@
-import React, { useMemo, useRef, useState } from "react";
-import { clampDate, fmtDate, isoDay, parseDay, snapStops } from "../services/dates";
+import React, { useMemo } from "react";
+import { isTrueAt } from "../services/api";
+import { formatDay, isoDay } from "../services/memoryView";
+import Icon from "./Icon";
 
-function DateField({ value, min, max, onChange }) {
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState("");
-  const [error, setError] = useState(false);
-  const cancelled = useRef(false);
-
-  const open = () => {
-    cancelled.current = false;
-    setText(isoDay(value));
-    setError(false);
-    setEditing(true);
-  };
-  const commit = () => {
-    const d = parseDay(text);
-    if (!d) return setError(true);
-    onChange(clampDate(d, min, max));
-    setEditing(false);
-  };
-
-  if (!editing) {
-    return (
-      <button type="button" className="timeline-date" onClick={open} title="Click to type an exact date">
-        {fmtDate(value)}
-        <svg className="timeline-date-icon" viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M11.5 2.5l2 2L6 12H4v-2z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-        </svg>
-      </button>
-    );
-  }
-  return (
-    <span className="timeline-date-edit">
-      {error && <span className="timeline-date-error" role="alert">Try a date like 2026-05-12 or 12 May 2026</span>}
-      <input
-        onFocus={(e) => e.target.select()}
-        className={`timeline-date-input${error ? " invalid" : ""}`}
-        aria-label="Type a date"
-        aria-invalid={error}
-        autoFocus
-        value={text}
-        placeholder="YYYY-MM-DD"
-        onChange={(e) => {
-          setText(e.target.value);
-          setError(false);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") commit();
-          if (e.key === "Escape") {
-            cancelled.current = true;
-            setEditing(false);
-          }
-        }}
-        onBlur={() => {
-          const d = !cancelled.current && parseDay(text);
-          if (d) onChange(clampDate(d, min, max));
-          setEditing(false);
-        }}
-      />
-    </span>
-  );
-}
-
-export default function Timeline({ startDate, endDate, value, onChange }) {
-  const stops = useMemo(() => snapStops(startDate, endDate), [startDate, endDate]);
-  const span = endDate - startDate;
-  const pct = span > 0 ? ((value - startDate) / span) * 100 : 0;
-  let index = 0;
-  stops.forEach((s, i) => {
-    if (Math.abs(s - value) < Math.abs(stops[index] - value)) index = i;
-  });
-
-  return (
-    <div className="timeline-wrap">
-      <div className="timeline-header">
-        <span className="timeline-label">Memory Time Machine</span>
-        <DateField value={value} min={startDate} max={endDate} onChange={onChange} />
-      </div>
-
-      <div className="timeline-track-wrap">
-        <span className="timeline-bound">{fmtDate(startDate)}</span>
-        <div className="timeline-track">
-          <div className="timeline-fill" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
-          <div className="timeline-thumb" style={{ left: `${Math.min(100, Math.max(0, pct))}%` }} />
-          <input
-            type="range"
-            min={0}
-            max={stops.length - 1}
-            step={1}
-            value={index}
-            onChange={(e) => onChange(stops[Number(e.target.value)])}
-            className="timeline-slider"
-            aria-label="Select date in memory"
-            aria-valuetext={fmtDate(value)}
-          />
-        </div>
-        <span className="timeline-bound">{fmtDate(endDate)}</span>
-      </div>
-    </div>
-  );
+const DAY = 86400000;
+export default function Timeline({ startDate, endDate, value, onChange, facts = [] }) {
+  const totalDays = Math.max(0, Math.round((endDate - startDate) / DAY));
+  const currentDay = Math.min(totalDays, Math.max(0, Math.round((value - startDate) / DAY)));
+  const pct = totalDays ? currentDay / totalDays * 100 : 0;
+  const ticks = useMemo(() => [...new Set(facts.flatMap((f) => [f.valid_from, f.valid_to]).filter(Boolean).map((d) => d.slice(0, 10)))].sort().filter((d) => new Date(d) >= startDate && new Date(d) <= endDate), [facts, startDate, endDate]);
+  const changeDay = (offset) => onChange(new Date(startDate.getTime() + Math.min(totalDays, Math.max(0, offset)) * DAY));
+  return <div className="timeline-wrap">
+    <div className="timeline-header"><div className="timeline-heading"><Icon name="clock" size={18} /><span className="timeline-label">Memory Time Machine</span><span className="timeline-helper">A different day. A different perspective.</span></div><div className="timeline-date-controls"><button aria-label="Previous day" className="icon-button" disabled={!currentDay} onClick={() => changeDay(currentDay - 1)}>←</button><label className="timeline-date"><span>{formatDay(value)}</span><input type="date" aria-label="Choose exact memory date" min={isoDay(startDate)} max={isoDay(endDate)} value={isoDay(value)} onChange={(e) => { if (!e.target.value) return; const date = new Date(`${e.target.value}T00:00:00Z`); if (date >= startDate && date <= endDate) onChange(date); }} /></label><button aria-label="Next day" className="icon-button" disabled={currentDay >= totalDays} onClick={() => changeDay(currentDay + 1)}>→</button></div></div>
+    <div className="timeline-track-wrap"><span className="timeline-bound">{formatDay(startDate)}</span><div className="timeline-track"><div className="timeline-fill" style={{ width: `${pct}%` }} />{ticks.filter((_, i) => i % Math.max(1, Math.ceil(ticks.length / 18)) === 0).map((date) => <span key={date} className="timeline-tick" title={formatDay(date)} style={{ left: `${totalDays ? (new Date(date) - startDate) / (endDate - startDate) * 100 : 0}%` }} />)}<input type="range" min={0} max={totalDays} value={currentDay} aria-label="Select date in memory" aria-valuetext={formatDay(value)} onChange={(e) => changeDay(Number(e.target.value))} className="timeline-slider" /></div><span className="timeline-bound">{formatDay(endDate)}</span></div>
+    <div className="timeline-facts" aria-hidden="true">{facts.slice(0, 120).map((f) => <span key={f.fact_id} className={`timeline-fact-bar ${isTrueAt(f, value) ? 'active' : 'inactive'}`} title={`${f.subject} — ${f.predicate}: ${f.object}`} />)}</div>
+  </div>;
 }

@@ -57,7 +57,7 @@ test("no raw source codes are shown on the card", () => {
 
 test("clicking a fact explains it in plain English", async () => {
   renderCard("payments service", "2026-05-20");
-  const toggle = within(row("Alice Chen")).getByRole("button");
+  const toggle = within(row("Alice Chen")).getByRole("button", { name: /Alice Chen/ });
   expect(toggle).toHaveAttribute("aria-expanded", "false");
   await userEvent.click(toggle);
   expect(toggle).toHaveAttribute("aria-expanded", "true");

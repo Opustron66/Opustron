@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { ask, replacedFacts } from "../services/api";
 import { fmtDate } from "../services/dates";
 import FactChange from "./FactChange";
+import Icon from "./Icon";
 
 const EXAMPLES = [
   "Who owned payments in March?",
@@ -147,7 +148,7 @@ function History({ sessions, currentId, onOpen }) {
   );
 }
 
-export default function ChatPanel({ asOf, facts = [] }) {
+export default function ChatPanel({ asOf, facts = [], enabled = true, onExplore = () => {} }) {
   const [{ sessions, currentId }, setState] = useState(initialState);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -168,6 +169,25 @@ export default function ChatPanel({ asOf, facts = [] }) {
       localStorage.setItem(CURRENT_KEY, currentId);
     } catch {}
   }, [sessions, currentId]);
+
+  if (!enabled) return (
+    <section className="chat-panel chat-preview">
+      <header className="chat-header"><h2 className="chat-title">Ask Chronicle</h2><span className="mode-badge">Browse-only demo</span></header>
+      <div className="chat-preview-body">
+        <span className="assistant-symbol"><Icon name="memory" size={28} /></span>
+        <span className="eyebrow">START WITH A LITTLE CURIOSITY</span>
+        <h2>Good questions.<br />Remembered details.</h2>
+        <p>Live answers are paused in this public demo. There’s still a whole memory to explore.</p>
+        <div className="explore-prompts">
+          <button onClick={() => onExplore('owns')}><Icon name="person" /><span><strong>Who owns what?</strong><small>Explore owners and project leads</small></span><Icon name="arrow" size={16} /></button>
+          <button onClick={() => onExplore('deadline')}><Icon name="clock" /><span><strong>What’s coming up?</strong><small>Find dates, plans, and deadlines</small></span><Icon name="arrow" size={16} /></button>
+          <button onClick={() => onExplore('history')}><Icon name="compare" /><span><strong>What changed along the way?</strong><small>Look back at earlier facts</small></span><Icon name="arrow" size={16} /></button>
+        </div>
+        <div className="browse-reassurance"><Icon name="shield" size={15} /><span>Explore saved evidence. No live AI requests.</span></div>
+      </div>
+      <div className="chat-input-row"><textarea className="chat-input" rows={1} aria-label="Chat unavailable in browse-only demo" placeholder="Live chat is paused in this demo" disabled /><button className="chat-send" aria-label="Send question" disabled><Icon name="arrow" /></button></div>
+    </section>
+  );
 
   // Writes go to the chat the question was asked in, even if the user has since switched.
   const append = (id, message) =>
@@ -194,7 +214,7 @@ export default function ChatPanel({ asOf, facts = [] }) {
 
   const send = async (text) => {
     const q = text.trim();
-    if (!q || loading) return;
+    if (!enabled || !q || loading) return;
     const id = currentId;
     setInput("");
     append(id, { role: "user", content: q, ts: Date.now() });

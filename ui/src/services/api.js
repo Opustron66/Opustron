@@ -22,6 +22,7 @@ export const getEntityHistory = (id) => get(`/entities/${id}/history`);
 export const getFacts = () => get("/facts"); // every fact, superseded included
 export const getFactsAsOf = (isoDate) => get(`/facts?as_of=${isoDate}`);
 export const getSpan = () => get("/span");
+export const getConfig = () => get("/config");
 export const getTimeline = (start, end) =>
   get(`/timeline?start=${start}&end=${end}`);
 

@@ -176,3 +176,15 @@ def test_configured_snapshot_is_loaded_before_opening_memory(setup, monkeypatch)
     with TestClient(create_app()) as client:
         assert client.get("/healthz").json()["memory_loaded"] is True
     restore.assert_called_once_with(setup, "https://files.example/state.zip", "0" * 64)
+
+
+def test_public_config_reports_chat_and_source_dates_without_secrets(setup, monkeypatch):
+    monkeypatch.setenv("NEBIUS_API_KEY", "not-for-the-browser")
+    docs = [{"doc_id": "d1", "date": "2027-07-20", "text": "First source"},
+            {"doc_id": "d2", "date": "2027-09-24", "text": "Last source"}]
+    (setup / "docs.jsonl").write_text("\n".join(json.dumps(d) for d in docs), encoding="utf-8")
+    with TestClient(create_app()) as client:
+        response = client.get("/api/config")
+        assert response.json() == {"chat_enabled": False, "document_count": 2,
+                                   "corpus_start": "2027-07-20", "corpus_end": "2027-09-24"}
+        assert "not-for-the-browser" not in response.text
