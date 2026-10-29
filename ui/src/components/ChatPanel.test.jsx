@@ -149,3 +149,11 @@ test("New chat starts empty, and History reopens the earlier one", async () => {
   await userEvent.click(screen.getByRole("button", { name: /Who owned payments\?/ }));
   expect(screen.getByText("Alice Chen.")).toBeInTheDocument();
 });
+
+test("an unavailable demo budget explains that memory browsing still works", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+  render(<ChatPanel asOf={asOf} />);
+  await askQuestion("Who owns billing?");
+  expect(await screen.findByText(/Live chat is unavailable or its demo budget has been used/)).toBeInTheDocument();
+  expect(screen.getByText(/You can still explore saved facts and sources/)).toBeInTheDocument();
+});

@@ -17,6 +17,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from chronicle.reason.pipeline import answer_question, gave_up
 from chronicle.reason.planner import InvalidQueryDate
+from chronicle.guard.remote_budget import BudgetUnavailable
+from chronicle.guard.spend_limit import SpendLimitReached
 
 from .api import CLAIMS_FILE, MemoryAPI
 from .models import parse_when
@@ -94,6 +96,8 @@ def router(memory: MemoryAPI | StateMemory) -> APIRouter:
             result = answer_question(request.question, api, as_of=request.as_of)
         except InvalidQueryDate as exc:
             raise HTTPException(400, str(exc)) from None
+        except (BudgetUnavailable, SpendLimitReached):
+            raise HTTPException(503, "Chat budget unavailable or exhausted. Saved memory is still available to browse.") from None
         except Exception:
             # Provider failures can include credentials or corpus text. Keep them private.
             raise HTTPException(502, "Unable to generate an answer. Check model configuration and try again.") from None

@@ -95,8 +95,9 @@ or dashboard shell. The snapshot loader rebuilds SQLite from saved JSONL files;
 it never reruns model extraction.
 
 Do not enable multiple instances or Uvicorn workers. Paid chat is explicitly
-blocked while `CHRONICLE_WEB_EPHEMERAL=1`, because losing the spending log would
-reset the local budget accounting.
+blocked while `CHRONICLE_WEB_EPHEMERAL=1` unless the verified external Upstash
+budget is configured, because losing the local log would reset its accounting.
+For optional chat without upgrading Render, follow [the Free chat guide](free-chat.md).
 
 ### Prepare the friend's saved memory
 
@@ -167,7 +168,8 @@ References: [Docker services](https://render.com/docs/docker),
 
 ## Enable paid chat later
 
-This is not supported by the Free blueprint. To enable chat later, first move
+The default Free blueprint keeps chat disabled. To use chat on Free with a durable
+external budget, follow [the Free chat guide](free-chat.md). For local-log budgeting, first move
 to durable storage for `/data` (including the egress log), explicitly set
 `CHRONICLE_WEB_EPHEMERAL=0`, and approve model spending. Then set:
 

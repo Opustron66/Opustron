@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from . import spend_limit
+from . import remote_budget
 
 _CACHE_DIR = Path.home() / ".chronicle" / "llm_cache"
 
@@ -220,7 +221,8 @@ class LLMClient:
         if cache_hit:
             raw, prompt_tokens, completion_tokens, finish_reason = cached, 0, 0, None
         else:
-            spend_limit.check(get_logger().records)
+            if not remote_budget.enabled():
+                spend_limit.check(get_logger().records)
             raw, prompt_tokens, completion_tokens, finish_reason = self._call_api(
                 redacted_messages, schema, model, temperature, budget, think
             )
@@ -285,13 +287,22 @@ class LLMClient:
         if thinking is not None:
             kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": thinking}}
 
+        def submit():
+            ledger = remote_budget.RemoteBudget() if remote_budget.enabled() else None
+            receipt = ledger.reserve(kwargs["model"], kwargs["max_tokens"]) if ledger else None
+            response = create(**kwargs)
+            if ledger:
+                usage = response.usage
+                ledger.settle(receipt, getattr(usage, "prompt_tokens", None), getattr(usage, "completion_tokens", None))
+            return response
+
         try:
-            resp = create(**kwargs)
+            resp = submit()
         except Exception as exc:
             if "response_format" not in kwargs or not _rejects_schema(exc):
                 raise
             kwargs.pop("response_format")
-            resp = create(**kwargs)
+            resp = submit()
             self._structured = False
 
         choice = resp.choices[0]
@@ -311,7 +322,7 @@ class LLMClient:
                         "openai package is required: uv add openai"
                     ) from exc
                 kwargs: dict[str, Any] = {"api_key": self._api_key, "base_url": self._base_url,
-                                          "max_retries": 2}
+                                          "max_retries": 0 if remote_budget.enabled() else 2}
                 if self._timeout is not None:
                     kwargs["timeout"] = self._timeout
                 if _LOOPBACK.match(self._base_url):

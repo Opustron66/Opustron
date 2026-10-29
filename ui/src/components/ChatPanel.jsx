@@ -230,11 +230,13 @@ export default function ChatPanel({ asOf, facts = [], enabled = true, onExplore 
         refused: data.refused,
         ts: Date.now(),
       });
-    } catch {
+    } catch (error) {
       // A failed request must never become an invented corpus answer.
       append(id, {
         role: "assistant",
-        content: "Unable to get an answer. Check that the memory server is running and its model credentials are configured, then try again.",
+        content: error.status === 503
+          ? "Live chat is unavailable or its demo budget has been used. You can still explore saved facts and sources."
+          : "Unable to get an answer. Check that the memory server is running and its model credentials are configured, then try again.",
         citations: [],
         ts: Date.now(),
       });

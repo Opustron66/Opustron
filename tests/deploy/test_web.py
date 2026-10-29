@@ -188,3 +188,56 @@ def test_public_config_reports_chat_and_source_dates_without_secrets(setup, monk
         assert response.json() == {"chat_enabled": False, "document_count": 2,
                                    "corpus_start": "2027-07-20", "corpus_end": "2027-09-24"}
         assert "not-for-the-browser" not in response.text
+
+
+def test_ephemeral_chat_accepts_a_verified_remote_budget(setup, monkeypatch):
+    monkeypatch.setenv("CHRONICLE_WEB_EPHEMERAL", "1")
+    monkeypatch.setenv("CHRONICLE_WEB_CHAT_ENABLED", "1")
+    monkeypatch.setenv("CHRONICLE_SPEND_BACKEND", "upstash")
+    monkeypatch.setenv("CHRONICLE_SPEND_LIMIT_USD", "0.25")
+    monkeypatch.setenv("NEBIUS_API_KEY", "fake")
+    ledger = Mock()
+    monkeypatch.setattr("chronicle.web.remote_budget.RemoteBudget", Mock(return_value=ledger))
+    with TestClient(create_app()) as client:
+        assert client.get("/api/config").json()["chat_enabled"] is True
+    ledger.status.assert_called_once()
+
+
+def test_disabled_chat_does_not_contact_remote_budget(setup, monkeypatch):
+    monkeypatch.setenv("CHRONICLE_WEB_EPHEMERAL", "1")
+    monkeypatch.setenv("CHRONICLE_SPEND_BACKEND", "upstash")
+    ledger = Mock(side_effect=AssertionError("No remote calls while chat is disabled"))
+    monkeypatch.setattr("chronicle.web.remote_budget.RemoteBudget", ledger)
+    with TestClient(create_app()) as client:
+        assert client.get("/api/config").json()["chat_enabled"] is False
+    ledger.assert_not_called()
+
+
+def test_unavailable_remote_budget_stops_chat_startup(setup, monkeypatch):
+    from chronicle.guard.remote_budget import BudgetUnavailable
+
+    monkeypatch.setenv("CHRONICLE_WEB_EPHEMERAL", "1")
+    monkeypatch.setenv("CHRONICLE_WEB_CHAT_ENABLED", "1")
+    monkeypatch.setenv("CHRONICLE_SPEND_BACKEND", "upstash")
+    monkeypatch.setenv("CHRONICLE_SPEND_LIMIT_USD", "0.25")
+    monkeypatch.setenv("NEBIUS_API_KEY", "fake")
+    ledger = Mock()
+    ledger.status.side_effect = BudgetUnavailable("missing ledger")
+    monkeypatch.setattr("chronicle.web.remote_budget.RemoteBudget", Mock(return_value=ledger))
+    with pytest.raises(BudgetUnavailable):
+        create_app()
+
+
+def test_exhausted_budget_does_not_prevent_memory_browsing(setup, monkeypatch):
+    from chronicle.guard.spend_limit import SpendLimitReached
+
+    monkeypatch.setenv("CHRONICLE_WEB_CHAT_ENABLED", "1")
+    monkeypatch.setenv("CHRONICLE_SPEND_LIMIT_USD", "0.25")
+    monkeypatch.setenv("NEBIUS_API_KEY", "fake")
+    monkeypatch.setattr("chronicle.memory.server.answer_question", Mock(side_effect=SpendLimitReached("private details")))
+    with TestClient(create_app()) as client:
+        response = client.post("/api/ask", json={"question": "Who owns billing?"})
+        assert response.status_code == 503
+        assert "budget unavailable or exhausted" in response.json()["detail"]
+        assert "private details" not in response.text
+        assert client.get("/api/facts").status_code == 200
