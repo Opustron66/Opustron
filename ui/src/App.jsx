@@ -5,6 +5,7 @@ import ChatPanel from "./components/ChatPanel";
 import EgressLog from "./components/EgressLog";
 import DateDiff from "./components/DateDiff";
 import Icon from "./components/Icon";
+import ContextGuide from "./components/ContextGuide";
 import { getEntities, getFacts, getSpan, getConfig, isTrueAt } from "./services/api";
 import { formatDay } from "./services/memoryView";
 import "./styles.css";
@@ -106,6 +107,7 @@ export default function App() {
 
   return <div className="app">
     <header className="app-header"><div className="header-inner"><Brand /><span className="app-tagline">A little context. A longer memory.</span><div className="app-header-right">
+      <ContextGuide />
       <span className={`app-corpus-label source-${memory.source}`}><i />{connecting ? 'Connecting to memory' : memory.source === 'live' ? 'Live memory' : memory.source === 'empty' ? 'Waiting for memory' : 'Memory unavailable'}</span>
       <button className="icon-button theme-toggle" aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><Icon name={theme === 'dark' ? 'sun' : 'moon'} /></button>
     </div></div></header>

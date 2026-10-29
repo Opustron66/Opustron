@@ -13,6 +13,9 @@ const paths = {
   moon: "M21 13a9 9 0 0 1-10-10 9 9 0 1 0 10 10",
   chevron: "M9 5l7 7-7 7",
   shield: "M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6z M8 12l3 3 5-6",
+  help: "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0 M9 9a3 3 0 1 1 5 2c-2 1-2 2-2 3 M12 17h.01",
+  close: "M6 6l12 12 M18 6L6 18",
+  copy: "M9 9h12v12H9z M15 9V3H3v12h6",
 };
 
 export default function Icon({ name, size = 18, ...props }) {
