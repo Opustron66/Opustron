@@ -167,6 +167,12 @@ request is in flight, or change the budget ID to bypass an exhausted allowance.
 
 ## Faster Ultra chat
 
+The header's **Demo guide** introduces Corpus A for first-time visitors. It
+explains the fictional team and source period, gives the recommended Time Machine
+date, and offers seven mixed question types with expandable reference answers.
+Copy controls put a question on the clipboard; they never submit a chat request.
+Visitors choose when to paste and send a paid question themselves.
+
 The UI waits for a complete JSON answer; it does not stream tokens. A question
 can include a query-interpretation call, up to three evidence-gathering rounds,
 and conditional grounding or second-look passes. Thus one question is not

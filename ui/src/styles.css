@@ -287,3 +287,38 @@ h1 { font: 650 clamp(25px, 2.65vw, 38px)/1.25 var(--heading); letter-spacing: -1
 .chat-empty-hint { color: var(--secondary); font-size: 11px; line-height: 1.7; }
 .chat-examples { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
 .chat-example { text-align: left; background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 10px; font-size: 11px; }
+
+/* Corpus A introduction: native dialog provides focus containment and Escape. */
+.guide-trigger { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--secondary); font-size: 11px; white-space: nowrap; }
+.guide-trigger:hover { color: var(--text); background: var(--hover); }
+.context-guide { margin: auto; padding: 0; width: min(840px, calc(100% - 32px)); max-height: min(90dvh, 960px); border: 1px solid var(--line); border-radius: var(--radius); color: var(--text); background: var(--surface); box-shadow: 0 24px 100px #0006; }
+.context-guide[open] { display: flex; flex-direction: column; }
+.context-guide::backdrop { background: #080b0dc7; backdrop-filter: blur(4px); }
+html:has(.context-guide[open]) { overflow: hidden; }
+.guide-header { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 22px 26px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.guide-header h2 { font: 600 23px var(--heading); letter-spacing: -.7px; margin-top: 5px; }
+.guide-content { padding: 24px 26px; overflow-y: auto; min-height: 0; font-size: 13px; }
+.guide-content > p { line-height: 1.8; color: var(--secondary); }
+.guide-setting { display: flex; justify-content: space-between; gap: 10px; margin: 18px 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; color: var(--secondary); font-size: 11px; }
+.guide-setting strong { color: var(--accent); }
+.guide-explainer { font-size: 12px; }
+.guide-start { background: var(--card); padding: 17px 19px; border-radius: 10px; margin: 20px 0 24px; border: 1px solid var(--line); }
+.guide-start h3, .guide-question h3 { font-size: 13px; font-weight: 600; }
+.guide-start ol { padding-left: 18px; margin-top: 9px; color: var(--secondary); line-height: 1.8; font-size: 12px; }
+.guide-start > p { color: var(--muted); font-size: 11px; margin-top: 12px; }
+.guide-questions { display: grid; gap: 13px; }
+.guide-question { border: 1px solid var(--line); border-radius: 11px; padding: 18px; background: var(--card); }
+.guide-question-heading { display: flex; align-items: flex-start; gap: 12px; }
+.guide-number { display: grid; place-items: center; flex-shrink: 0; width: 27px; height: 27px; border: 1px solid var(--line); border-radius: 7px; color: var(--accent); font-size: 11px; }
+.guide-question-heading p { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.guide-prompt { font-size: 13px; line-height: 1.7; margin: 15px 0; overflow-wrap: anywhere; }
+.guide-question-actions { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; }
+.guide-question details { flex: 1; min-width: 0; font-size: 12px; }
+.guide-question summary { color: var(--accent); cursor: pointer; width: fit-content; }
+.guide-question details p { color: var(--secondary); margin-top: 10px; line-height: 1.8; }
+.guide-copy { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; background: transparent; border: 0; padding: 0; color: var(--blue); font-size: 11px; }
+.guide-reference { margin-top: 20px; font-size: 11px; }
+.guide-footer { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 14px 26px; border-top: 1px solid var(--line); flex-shrink: 0; }
+.guide-footer p { font-size: 11px; color: var(--muted); }
+.guide-done { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 7px; padding: 8px 17px; font-size: 12px; white-space: nowrap; }
+@media (max-width: 760px) { .app-header-right { flex-wrap: wrap; justify-content: flex-end; gap: 7px; } .guide-trigger { font-size: 10px; padding: 6px 8px; } .context-guide { width: calc(100% - 20px); max-height: 92dvh; } .guide-header, .guide-content { padding: 18px; } .guide-header h2 { font-size: 20px; } .guide-setting { flex-direction: column; gap: 5px; } .guide-footer { padding: 13px 18px; } .guide-footer p { font-size: 10px; } .guide-question { padding: 14px; } }
