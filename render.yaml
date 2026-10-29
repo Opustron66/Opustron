@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: chronicle
+    runtime: docker
+    region: singapore
+    plan: free
+    numInstances: 1
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeployTrigger: off
+    envVars:
+      - key: CHRONICLE_WEB_CHAT_ENABLED
+        value: "0"
+      - key: CHRONICLE_WEB_EPHEMERAL
+        value: "1"
+      - key: CHRONICLE_STATE_DIR
+        value: /data/state

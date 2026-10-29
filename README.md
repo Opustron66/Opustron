@@ -20,7 +20,13 @@ right answer. Personal data is pseudonymised before any call leaves the machine.
 
 ## Quick start
 
-Needs Python 3.10+, [uv](https://docs.astral.sh/uv/) and Node 18+.
+Needs Python 3.11+, [uv](https://docs.astral.sh/uv/) and Node 18+.
+
+For a hosted UI and API using an existing memory state, see
+[the deployment guide](docs/deployment.md). The production image serves both on
+one port, allows public browsing, and disables paid chat by default. The Render
+Free configuration restores an approved saved-memory snapshot after restarts;
+it does not require a paid disk or re-ingestion.
 
 ```bash
 git clone https://github.com/Opustron66/Opustron.git
