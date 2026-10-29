@@ -418,6 +418,15 @@ morning" wrong) and "a commitment counts as a step taken" (the as-of answer that
 answer shape: start with the option that holds, in the question's own words, not "Yes." or "No."
 Questions that ask for yes or no are left alone.
 
+**Full names** (`chronicle/reason/names.py`). A lone first name in the answer ("Jin.") is written
+out in full ("Jin Oh.") when exactly one known person has it. Known people are those in ingest's
+`roster.json` plus every full name written as an email sender or recipient or a chat speaker in the
+state's `docs.jsonl`; a capitalised word right before the pair ("Platform Eng Ops") marks a team, not
+a person. With names masked, the evidence is written out the same way before the model sees it, so
+"Rohan" and "Rohan Dasgupta" share one stand-in instead of two. The privacy-on run 9 scored 0.898
+against 0.957 with privacy off; it answered "Jin." and "Sam." where privacy-off runs said "Jin Oh."
+and "Sam Iverson.", and refused "who leads Project Beacon".
+
 **Both numbers.** When the question asks for both numbers and the answer gives fewer than two
 figures (beyond any in the question; dates, times and durations like "24h" don't count, and
 when the answer has percentages only percentages count), the answer is asked for once more with "from <before> to
