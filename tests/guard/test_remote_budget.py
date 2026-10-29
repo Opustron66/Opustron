@@ -254,3 +254,27 @@ def test_http_errors_hide_credentials(monkeypatch):
 def test_budget_must_be_finite_positive_microdollars(value):
     with pytest.raises(rb.BudgetUnavailable):
         rb.micros(value)
+
+
+def test_budget_commands_reuse_connections_without_replaying_requests(monkeypatch):
+    monkeypatch.setenv("UPSTASH_REDIS_REST_URL", "https://test.upstash.io")
+    monkeypatch.setenv("UPSTASH_REDIS_REST_TOKEN", "fake-secret")
+    monkeypatch.setenv("CHRONICLE_SPEND_BUDGET_ID", "demo-v1")
+    monkeypatch.setenv("CHRONICLE_SPEND_LIMIT_USD", "5")
+    monkeypatch.setenv("CHRONICLE_MODEL", rb.ULTRA)
+    client = Mock()
+    client.post.return_value = httpx.Response(200, json={"result": 1}, request=httpx.Request("POST", "https://test.upstash.io"))
+    constructor = Mock(return_value=client)
+    monkeypatch.setattr(httpx, "Client", constructor)
+    rb._http_client.cache_clear()
+    try:
+        first, second = rb.RemoteBudget(), rb.RemoteBudget()
+        assert first.command("PING") == 1
+        assert second.command("PTTL", second.key) == 1
+        constructor.assert_called_once()
+        assert client.post.call_count == 2
+        assert client.post.call_args_list[0].kwargs["json"] == ["PING"]
+        assert client.post.call_args_list[1].kwargs["json"] == ["PTTL", second.key]
+        assert client.post.call_args.kwargs["headers"] == {"Authorization": "Bearer fake-secret"}
+    finally:
+        rb._http_client.cache_clear()

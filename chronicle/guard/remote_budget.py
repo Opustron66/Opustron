@@ -8,11 +8,13 @@ No TTLs: losing the ledger must stop calls, never replenish the budget.
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
 import re
 import uuid
 from decimal import ROUND_CEILING, Decimal
+from functools import lru_cache
 from urllib.parse import urlsplit
 
 import httpx
@@ -24,6 +26,16 @@ ULTRA = "nvidia/Nemotron-3-Ultra-550b-a55b"
 SUPPORTED_MODELS = {MODEL, ULTRA}
 CONTEXT_TOKENS = 1_048_576
 MICRO = Decimal(1_000_000)
+
+
+@lru_cache(maxsize=1)
+def _http_client() -> httpx.Client:
+    # The sync client is thread-safe. Reuse TLS connections between reservations
+    # and settlements without retrying any ambiguous budget write.
+    client = httpx.Client(timeout=5, follow_redirects=False, trust_env=False,
+                          limits=httpx.Limits(max_connections=4, max_keepalive_connections=2))
+    atexit.register(client.close)
+    return client
 
 INIT = """
 if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
@@ -117,8 +129,7 @@ class RemoteBudget:
     def command(self, *args):
         try:
             # No automatic HTTP retries: ambiguous writes must not be replayed.
-            with httpx.Client(timeout=5, follow_redirects=False, trust_env=False) as client:
-                response = client.post(self.url, headers={"Authorization": f"Bearer {self.token}"}, json=list(args))
+            response = _http_client().post(self.url, headers={"Authorization": f"Bearer {self.token}"}, json=list(args))
             response.raise_for_status()
             body = response.json()
             if "error" in body or "result" not in body:

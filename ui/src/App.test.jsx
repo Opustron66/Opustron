@@ -49,6 +49,7 @@ test('retry restores the real corpus and its actual chat configuration', async (
   await screen.findByText('Live memory');
   expect(screen.getByText('425')).toBeInTheDocument();
   expect(screen.getByLabelText('Ask a question')).toBeEnabled();
+  expect(screen.getByText('Live chat · uses paid model calls')).toBeInTheDocument();
 });
 
 test('temporary configuration failure does not falsely report chat as disabled', async () => {
@@ -109,6 +110,7 @@ test('live memory uses real facts and explains that paid chat is paused', async 
   expect(detail.getByText('Dana Lee').closest('.fact-row')).toHaveClass('fact-superseded');
   expect(detail.getByText('Sam Ortiz').closest('.fact-row')).toHaveClass('fact-current');
   expect(screen.getByText('Browse-only demo')).toBeInTheDocument();
+  expect(screen.getByText('Browse-only demo · chat disabled')).toBeInTheDocument();
   expect(screen.getByLabelText('Chat unavailable in browse-only demo')).toBeDisabled();
   await userEvent.click(screen.getByRole('button', { name: /Who owns what/ }));
   expect(screen.getByLabelText('Filter memory')).toHaveValue('owns');

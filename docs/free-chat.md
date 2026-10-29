@@ -89,6 +89,8 @@ off spending again, set `CHRONICLE_WEB_CHAT_ENABLED=0` and redeploy.
 
 ## How reservations behave
 
+For chat response-time settings, see [Faster Ultra chat](#faster-ultra-chat).
+
 Each actual provider attempt atomically reserves the price of the model's full
 1,048,576-token input context plus its configured output limit. For Lightning
 with 16,384 output tokens, that is about $0.067 per attempt. This deliberately
@@ -162,6 +164,42 @@ billing guarantee. Pricing changes, other uses of the same Nebius account, or
 manually resetting/replacing the ledger are outside its accounting. Keep a
 margin below your remaining account balance. Do not reset a ledger while a
 request is in flight, or change the budget ID to bypass an exhausted allowance.
+
+## Faster Ultra chat
+
+The UI waits for a complete JSON answer; it does not stream tokens. A question
+can include a query-interpretation call, up to three evidence-gathering rounds,
+and conditional grounding or second-look passes. Thus one question is not
+necessarily one provider request. Model reasoning time and these extra calls
+both contribute to response time, independently of a Render cold start.
+
+Keep the current Ultra model, thinking configuration, output-token allowance,
+retrieval settings and all existing verification/retry passes. Disabling
+thinking, shortening output limits or removing answer checks can change accuracy,
+so these are not the recommended response to a latency complaint when accuracy
+must be preserved.
+
+The budget client reuses HTTPS connections between Redis reservations and
+settlements, reducing repeated connection setup without changing prompts, model
+parameters, retrieval or budget authorization. No fixed speedup is claimed: live
+latency has not been measured, and model generation can still dominate.
+
+The UI shows elapsed request time instead of only saying thinking, and explains
+that a complete answer can involve multiple evidence checks. This makes waiting
+clearer; it does not stream intermediate text or reveal model reasoning.
+Existing exact-request caching can help repeated identical requests while the
+instance stays alive; Render Free can discard that local cache on restart. A
+Render cold start can add latency before the app responds. None of these changes
+reduce the reasoning or checking performed for an uncached question.
+
+The chat's suggested questions are exact published Corpus A prompts: Atlas's
+GitLab path (`fact-031`), Quillon's current launch target
+(`fresh-quillon-launch-date`), Beacon eval ownership (`attrib-eval-owners`), and
+the historical backfill window (`asof-backfill-window`). At the end of Corpus A,
+expected answers are `platform-eng/atlas`, 14 July 2026, Anya Volkov / Jin Oh,
+and 30 days as of 20 May. Set the Time Machine to 27 May 2026 for this sample set.
+Viewing suggestions costs nothing; clicking a suggestion in enabled chat sends
+a real paid question.
 
 ## Offline verification
 

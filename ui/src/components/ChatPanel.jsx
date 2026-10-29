@@ -4,11 +4,13 @@ import { fmtDate } from "../services/dates";
 import FactChange from "./FactChange";
 import Icon from "./Icon";
 
+// Published corpus_a/questions/questions.jsonl: fact-031,
+// fresh-quillon-launch-date, attrib-eval-owners, asof-backfill-window.
 const EXAMPLES = [
-  "Who owned payments in March?",
-  "What changed for Alex Chen after 11 May?",
-  "What was Sara Khan working on last week?",
-  "Who is on call for the deploy pipeline?",
+  "What is the GitLab project path for Atlas?",
+  "What is the current internal launch target date for Quillon v2? Answer with the date only.",
+  "Who owns Beacon's eval framework, and who owns the evaluator metric decision?",
+  "As of 2026-05-20, what was the default cold-start ingest backfill window?",
 ];
 
 const CHATS_KEY = "chronicle.chats";
@@ -152,12 +154,20 @@ export default function ChatPanel({ asOf, facts = [], enabled = true, onExplore 
   const [{ sessions, currentId }, setState] = useState(initialState);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const [showHistory, setShowHistory] = useState(false);
   const bottomRef = useRef(null);
 
   const current = sessions.find((s) => s.id === currentId);
   const messages = current?.messages || [];
   const pastCount = sessions.filter((s) => s.messages.length).length;
+
+  useEffect(() => {
+    if (!loading) { setElapsed(0); return; }
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [loading]);
 
   useEffect(() => {
     if (messages.length || loading) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -284,7 +294,7 @@ export default function ChatPanel({ asOf, facts = [], enabled = true, onExplore 
             <p className="chat-empty-title">What would you like to remember?</p>
             <p className="chat-empty-hint">
               Chronicle answers from memory as it stood on <strong>{fmtDate(asOf)}</strong>. Move the Time Machine to
-              ask about another day. Try one of these:
+              ask about another day. Try a question from NVIDIA Corpus A:
             </p>
             <div className="chat-examples">
               {EXAMPLES.map((q) => (
@@ -312,8 +322,8 @@ export default function ChatPanel({ asOf, facts = [], enabled = true, onExplore 
           </div>
         ))}
         {loading && (
-          <div className="chat-message chat-assistant">
-            <span className="chat-thinking">Thinking…</span>
+          <div className="chat-message chat-assistant" role="status">
+            <span className="chat-thinking">Generating an answer… {elapsed}s{elapsed >= 15 && <><br />Still waiting for the complete answer. It may involve multiple evidence checks.</>}</span>
           </div>
         )}
         <div ref={bottomRef} />
