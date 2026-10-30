@@ -9,6 +9,44 @@ deleted. When Bob takes over the payments service from Alice, Alice's fact is
 closed rather than overwritten, so "who owned payments on 3 May?" still has the
 right answer. Personal data is pseudonymised before any call leaves the machine.
 
+**Nebius x NVIDIA Global AI Hackathon, Personal AI track.**
+[Live demo](TODO) · [Video](TODO) · [Devpost write-up](docs/devpost.md) ·
+[Benchmark results](docs/benchmark-results.md) · [Architecture](docs/architecture.md)
+
+![Chronicle memory workspace](docs/images/chronicle-workspace-desktop.png)
+
+### Results
+
+On NVIDIA's Agent Memory Benchmark (corpus A, 186 questions), with the same model (Nemotron 3
+Ultra), corpus and grader as NVIDIA's reference runs:
+
+| System | Overall |
+|---|---:|
+| NVIDIA agentic RAG (reference) | 0.828 |
+| NVIDIA self-model (reference) | 0.909 |
+| **Chronicle, every name masked** | **0.946** |
+| **Chronicle, privacy off** | **0.957** |
+
+Runs vary by about ±2 points, and we never read the gold answers. Details and caveats are in
+[docs/benchmark-results.md](docs/benchmark-results.md).
+
+### NVIDIA Nemotron and Nebius Token Factory
+
+Every model call goes to **NVIDIA Nemotron on Nebius Token Factory** through one guarded client
+(`chronicle/guard/llm_client.py`):
+
+| Model | Used for |
+|---|---|
+| Nemotron 3.5 Lightning (`nvidia/Nemotron-3_5-Lightning`) | Fact extraction at ingest, development (425 documents in about 8 minutes, under $1) |
+| Nemotron 3 Ultra (`nvidia/Nemotron-3-Ultra-550b-a55b`) | Answering, topic consolidation and every reported benchmark run |
+
+Token Factory's OpenAI-compatible endpoint meant there was nothing to host: switching between
+Lightning and Ultra is one environment variable (`CHRONICLE_MODEL`), which let us run more than
+10 full benchmark runs in the final week. We also use NVIDIA's Agent Memory Benchmark for
+evaluation, and ship a Hermes Agent plugin with an OpenShell egress policy and NemoClaw preset
+that limit the sandbox to Token Factory and Tavily (see
+[Running in a sandbox](#running-in-a-sandbox-with-hermes-agent)).
+
 | Piece | What it does |
 |---|---|
 | Ingest (P1) | Parses email, chat, calendar and markdown into events and facts |
