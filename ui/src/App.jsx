@@ -118,7 +118,7 @@ export default function App() {
       <section className="workspace-intro"><div><span className="eyebrow">YOUR MEMORY WORKSPACE</span><h1>Connect the dots.<br className="mobile-break" /> Across time.</h1><p>Find the people, decisions, and details. See how the story changed.</p></div><div className="workspace-caption"><Icon name="shield" /><span>Source-backed memory<br /><strong>Every fact has a story.</strong></span></div></section>
       {['loading', 'error'].includes(memory.source) ? <section className="empty-workspace connection-state" aria-live="polite" aria-busy={connecting}>
         <Icon name="memory" size={40} /><h2>{connecting ? 'Connecting to saved memory…' : 'Saved memory is temporarily unavailable.'}</h2>
-        <p>{connecting ? 'Waiting for the service to respond. No sample facts are shown.' : 'A memory request failed. This does not mean your corpus was deleted. We retry briefly; you can also reconnect below.'}</p>
+        <p>{connecting ? 'Loading your saved memory. Please wait—do not refresh the page.' : 'A memory request failed. This does not mean your corpus was deleted. We retry briefly; you can also reconnect below.'}</p>
         <button className="text-button" onClick={() => setReload((value) => value + 1)} disabled={connecting}>Retry connection</button>
       </section> : memory.source === 'empty' ? <section className="empty-workspace"><Icon name="memory" size={40} /><h2>Your memory starts here.</h2><p>The service is connected but has no facts yet. Once the saved dataset is added, people, projects, and their history will appear here.</p></section> : <>
         <section className="overview-strip" aria-label="Memory overview">
@@ -148,7 +148,7 @@ export default function App() {
       <footer className="app-footer"><EgressLog /></footer>
       <div className="workspace-footnote"><span>Chronicle · Memory with a sense of time.</span><span>{memory.source === 'live'
         ? memory.config?.chat_enabled === true ? 'Live chat · uses paid model calls' : 'Browse-only demo · chat disabled'
-        : connecting ? 'Connecting to saved memory...Do not refresh the page' : memory.source === 'empty' ? 'No saved memory loaded' : 'Saved memory unavailable'}</span></div>
+        : connecting ? 'Connecting to saved memory' : memory.source === 'empty' ? 'No saved memory loaded' : 'Saved memory unavailable'}</span></div>
     </main>
   </div>;
 }
