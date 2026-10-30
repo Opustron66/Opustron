@@ -12,6 +12,41 @@ documents ──P1 ingest──▶ state/claims.jsonl ──P2 sync──▶ sta
                          P4 UI (/api/entities, /api/facts) ◀──┘
 ```
 
+## Answering a question (P3)
+
+Most of the accuracy comes from this pipeline. Every model call in it goes through the guard below.
+
+```mermaid
+flowchart TD
+    Q[Question + optional as-of date] --> P[Plan: question type, entities, as-of date]
+    P --> R[Retrieve, time-routed: facts, topic timelines, person pages, documents]
+    R --> K[Key lines: evidence repeating the question's wording]
+    K --> A[Answer with quotes, up to 3 calls: may search again or open a document]
+    A --> V[Vote on flip-prone questions]
+    V --> G[Quote check in code: unbacked names and numbers get one retry]
+    G --> S{Says the corpus is silent?}
+    S -- yes --> W[Second look with wider evidence]
+    S -- no --> F
+    W --> F[Wording fixes: bare value first, negations in their own clause, full names]
+    F --> O[Answer + citations]
+```
+
+## Privacy guard (P4)
+
+```mermaid
+flowchart LR
+    C[Any Chronicle module] --> D[Detect PII: regex + Presidio/spaCy]
+    D --> M[Pseudonymise: Alice Tan becomes PERSON_1 or a stand-in name]
+    M --> L[Spend cap and egress log]
+    L --> N[Nemotron on Nebius Token Factory]
+    N --> U[Restore real values in the reply]
+    U --> C
+```
+
+Dates are deliberately not masked, because Chronicle reasons about when facts were true. CI fails
+if code outside `chronicle/guard/` imports an HTTP client, so no call can bypass the guard. Web
+searches (Tavily) cannot be pseudonymised, so a query that identifies a person is refused.
+
 ## Handoffs
 
 | From → to | Contract |
