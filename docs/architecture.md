@@ -116,3 +116,38 @@ Dana?" need them.
 
 Free-text Hermes memories are stored as `kind = 'note'` facts at instant precision.
 `remember_note(..., supersedes=)` and `retire_note` close them the same way.
+
+### Using it
+
+```python
+from chronicle.memory import MemoryAPI
+
+memory = MemoryAPI.from_state(".tmp/chronicle")   # loads new lines from state/claims.jsonl
+memory.holder_at("owns", "payments service", "2026-05-03").subject   # "Alice Chen"
+memory.search("who owns payments", as_of="2026-05-20")               # ranked Facts with doc_id + quote
+memory.history("payments service")                                   # every owner, oldest first
+memory.as_of("2026-06-01", known_at="2026-04-20")                    # what we believed on 20 Apr
+```
+
+```bash
+python -m chronicle.memory sync  --state .tmp/chronicle   # load claims.jsonl into SQLite
+python -m chronicle.memory serve --state .tmp/chronicle   # UI API on http://localhost:8000/api
+```
+
+### HTTP API
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/entities` | Entities with `entity_id`, `name`, `entity_type`, `aliases`, `fact_count` |
+| `GET /api/entities/{id}/history` | `{entity, facts}`, superseded facts included |
+| `GET /api/facts?as_of=YYYY-MM-DD` | Facts true that day (all facts without `as_of`); optional `known_at`, `subject`, `predicate` |
+| `GET /api/facts/{fact_id}/versions` | Every recorded version of one fact |
+| `GET /api/timeline?start=&end=` | Facts starting or ending in the window |
+| `GET /api/search?q=&as_of=&k=` | Ranked facts |
+| `GET /api/span` | First and last day in memory (slider range) |
+| `POST /api/ask` | `{answer, source_ids, citations}` for `{question, as_of?}`; answers through the privacy guard |
+
+The server reloads `claims.jsonl` when P1 appends to it. Intervals are half-open: on a
+handover day the new owner holds. `chronicle.memory.backend.SQLiteBackend` implements the
+Hermes `ChronicleBackend` protocol (`$CHRONICLE_MEMORY_DB`, default
+`~/.chronicle/memory.sqlite3`).
