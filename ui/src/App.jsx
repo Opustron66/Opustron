@@ -148,7 +148,7 @@ export default function App() {
       <footer className="app-footer"><EgressLog /></footer>
       <div className="workspace-footnote"><span>Chronicle · Memory with a sense of time.</span><span>{memory.source === 'live'
         ? memory.config?.chat_enabled === true ? 'Live chat · uses paid model calls' : 'Browse-only demo · chat disabled'
-        : connecting ? 'Connecting to saved memory, Do not refresh the page' : memory.source === 'empty' ? 'No saved memory loaded' : 'Saved memory unavailable'}</span></div>
+        : connecting ? 'Connecting to saved memory...Do not refresh the page' : memory.source === 'empty' ? 'No saved memory loaded' : 'Saved memory unavailable'}</span></div>
     </main>
   </div>;
 }
