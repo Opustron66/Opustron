@@ -17,7 +17,7 @@ submitting.
 | Nebius services | Nebius Token Factory (every model call, OpenAI-compatible endpoint) |
 | Other NVIDIA tools | NVIDIA Agent Memory Benchmark (`NVIDIA/nemoclaw-community`), OpenShell egress policy, NemoClaw preset |
 | Built with | python, sqlite, react, vite, nvidia-nemotron, nebius-token-factory, hermes-agent, openshell, nemoclaw, presidio, spacy, tavily, render, upstash |
-| Existed before the submission period? | No. The repo was created on 16 Oct 2026 during the hackathon, and all code was written during the submission period. |
+| Existed before the submission period? | No. The repo was created on 14 Oct 2026 during the hackathon, and all code was written during the submission period. |
 
 ## About the project
 
@@ -81,17 +81,18 @@ Four people, four layers, connected by one shared `Claim` schema:
 Every model call in Chronicle goes to **Nemotron on Nebius Token Factory** through its
 OpenAI-compatible endpoint.
 
-- **Nemotron 3.5 Lightning** for ingestion and day-to-day development. Extracting facts from 425
+- **Nemotron 3.5 Lightning** for day-to-day development ingests. Extracting facts from 425
   benchmark documents took about 8 minutes and cost under $1, so we could re-ingest after every
   prompt change.
-- **Nemotron 3 Ultra (550B)** for answering, topic consolidation and every reported benchmark run.
+- **Nemotron 3 Ultra (550B)** for answering, topic consolidation and every reported benchmark run,
+  including that run's ingest.
   Its 1M-token context also let us test answering over the whole corpus in one prompt, with the
   shared prefix served from Token Factory's prompt cache.
 - **Structured output.** Extraction uses `json_schema` response formats with thinking turned off;
   answering uses reasoning mode with a 16k token budget.
 - **Token Factory sped up our iteration.** There was nothing to host: we changed one environment
-  variable to switch between Lightning and Ultra, and ran more than 10 full benchmark runs of
-  186 questions each in the final week.
+  variable to switch between Lightning and Ultra, and ran 10 full benchmark runs of 186
+  questions each in the final three days.
 - We evaluated on **NVIDIA's Agent Memory Benchmark** with the same model, corpus and grader as
   NVIDIA's own reference runs.
 
@@ -109,23 +110,47 @@ Corpus A of NVIDIA's Agent Memory Benchmark: 186 questions, Nemotron 3 Ultra, NV
 
 - Same model, same corpus, same grader as NVIDIA's reference runs. NVIDIA's runs have no privacy
   layer at all, and ours scores higher even with every name masked.
-- Masking used to cost 5–9 points (0.871 in run 1, 0.898 in run 9). Writing first names out in
-  full before masking, so that "Jin" and "Jin Oh" share one pseudonym, closed most of the gap.
-- **Efficiency:** about 29k tokens per question (run 6) against 241k for NVIDIA's self-model.
+- With the final answer pipeline, masking cost about 6 points (0.898 in run 9 against 0.957 with
+  privacy off). Writing first names out in full before masking, so that "Jin" and "Jin Oh" share
+  one pseudonym, closed most of the gap (0.946 in run 10).
+- **Efficiency:** about 29k answering tokens per question with privacy off (runs 7 and 8) and 33k
+  with privacy on (run 10), against 241k for NVIDIA's self-model. These are answering tokens only:
+  our ingest usage was not recorded, and NVIDIA notes its reference runs' costs are not directly
+  comparable.
 - **Honesty:** we never read the benchmark's gold answers, only our own right/wrong flags. Results
   vary by about ±2 points between identical runs. NVIDIA describes its reference runs as "not a
   ranking", so we present this as a comparison, not a win. Our fixes were driven by corpus A's
   misses; corpus B (a different domain) has not been re-run with the final pipeline.
 
-Per-question-type results are in `docs/benchmark-results.md`.
+### How we got there
+
+Every row is a full 186-question run on corpus A with Nemotron 3 Ultra. Scores come from the
+benchmark's grader; we only ever read our own right/wrong flags.
+
+| Run | Privacy | Overall | What changed |
+|---|---|---:|---|
+| Phase 0 | off | 0.602 | First end-to-end pipeline: extraction, bi-temporal memory, retrieval, answers |
+| Next phase (2 trials) | off | 0.930, 0.914 | Topic timelines, hybrid retrieval, agentic answers (search again or open a document) |
+| 1 | on | 0.871 | First run with every name masked |
+| 2 | on | 0.909 | Masking fixes after run 1: less over-masking, URLs left readable |
+| 4 | off | 0.914 | Privacy off from here on, to measure answer accuracy on its own |
+| 5 | off | 0.941 | Bare value first, a wider second look before giving up, voting on flip-prone questions, computed relative dates |
+| 6 | off | 0.946 | Key lines (evidence that repeats the question's wording), quotes checked in code |
+| 7 | off | 0.957 | Answers in the evidence's own words, either-or answer shape, both-numbers check |
+| 8 | off | 0.957 | Claim-based voting, named methods and owners; a second run at the same score |
+| 9 | on | 0.898 | Run 8's code with every name masked |
+| 10 | on | **0.946** | First names written out in full before masking ("Jin" → "Jin Oh") |
+
+Run 3 (0.898, privacy on) was a repeat of run 2's code. Per-question-type results are in
+`docs/benchmark-results.md`.
 
 ### Challenges we ran into
 
 - **Run-to-run noise.** Identical code moved ±2 points between runs. We added claim-based voting
   on yes/no, "which one", "how many" and as-of questions, the types that flipped most.
 - **Masking without losing accuracy.** With names replaced by `PERSON_1`, the model lost track of
-  who was who. Consistent pseudonyms across a request and writing names out in full before masking
-  took the privacy-on score from 0.871 to 0.946.
+  who was who. Privacy-on scores rose from 0.871 (run 1) to 0.946 (run 10) as the whole pipeline
+  improved; writing names out in full before masking took the same code from 0.898 to 0.946.
 - **Reasoning models and structured output.** With thinking on, Nemotron sometimes wrote its
   reasoning into the content field, and reasoning tokens used up small token budgets, which
   produced empty replies. We extract with thinking off and retry truncated answers.
@@ -137,7 +162,8 @@ Per-question-type results are in `docs/benchmark-results.md`.
 
 - 0.946 on NVIDIA's benchmark **with every name masked**, above NVIDIA's best reference run
   (0.909), which has no masking.
-- Every answer is backed by a quote that code checks against the source text.
+- Every quote an answer gives is checked against the source text in code, and an answer with
+  names or numbers no quote backs gets a correction pass.
 - An architecture where nothing can bypass the privacy guard: CI enforces it.
 - A memory you can see: drag the slider and watch Alex's ownership end on 15 May.
 
@@ -177,8 +203,8 @@ removed.
 - **Thinking with structured output.** When `json_schema` was off, Nemotron 3.5 Lightning in
   thinking mode wrote its reasoning into `content`. Documenting how thinking interacts with
   `response_format` would help.
-- **Usage accounting.** The benchmark's accounting proxy could not read gzipped responses, so none
-  of our runs had countable token usage. A usage endpoint per key, or uncompressed `usage` fields,
+- **Usage accounting.** The benchmark's accounting proxy counted our answering tokens but recorded
+  none for ingest, so we cannot compare ingest cost with NVIDIA's runs. A usage endpoint per key
   would make cost comparisons possible.
 - **Key errors.** A night of benchmark runs failed with 401s and we only noticed afterwards. A
   clearer error body for an invalid or expired key would help.
