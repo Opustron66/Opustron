@@ -1,0 +1,73 @@
+---
+title: Chronicle architecture
+config:
+  htmlLabels: false
+  layout: elk
+  elk:
+    nodePlacementStrategy: NETWORK_SIMPLEX
+    mergeEdges: true
+  theme: base
+  themeVariables:
+    fontFamily: "Arial, Helvetica, sans-serif"
+    fontSize: "14px"
+    primaryColor: "#ffffff"
+    primaryTextColor: "#111111"
+    primaryBorderColor: "#333333"
+    lineColor: "#333333"
+    secondaryColor: "#ffffff"
+    tertiaryColor: "#ffffff"
+    clusterBkg: "#ffffff"
+    clusterBorder: "#888888"
+    titleColor: "#111111"
+    edgeLabelBackground: "#ffffff"
+  flowchart:
+    htmlLabels: false
+    wrappingWidth: 400
+    curve: linear
+    nodeSpacing: 24
+    rankSpacing: 46
+    padding: 16
+---
+flowchart TB
+    classDef ext stroke-dasharray: 5 4
+
+    subgraph SRC["Sources"]
+        direction LR
+        S1["Emails"]:::ext ~~~ S2["Chats"]:::ext ~~~ S3["Calendars"]:::ext ~~~ S4["Notes"]:::ext
+    end
+
+    subgraph ING["Ingest · Python"]
+        direction LR
+        I1["Build roster"] --> I2["Parse"] --> I3["Extract facts"] --> I4["Verify quotes"] --> I5["Close superseded facts"] --> I6["Consolidate topics"]
+    end
+
+    subgraph MEM["Bi-temporal memory · SQLite"]
+        direction LR
+        M1["Facts<br>valid time + recorded time"] ~~~ M2["Topic timelines"] ~~~ M3["Person pages"] ~~~ M4["Source documents"]
+    end
+
+    subgraph RSN["Reason · Python"]
+        direction LR
+        R0(["Question"]) --> R1["Plan"] --> R2["Retrieve by time"] --> R3["Key lines + dates"] --> R4["Answer"] --> R5["Vote"] --> R6["Check quotes"] --> R7["Second look"] --> R8(["Answer + citations"])
+    end
+
+    subgraph SUR["Surfaces"]
+        direction LR
+        U1["Memory Time Machine<br>React"] ~~~ U2["Hermes Agent plugin"]
+    end
+
+    subgraph GRD["Privacy guard · every model call"]
+        direction LR
+        G1["Mask PII<br>Presidio + spaCy"] --> G2["Spend cap + egress log"] --> G3["Nemotron<br>Nebius Token Factory"]:::ext --> G4["Restore names"]
+    end
+
+    SRC -- "documents" --> ING
+    ING -- "dated facts" --> MEM
+    MEM -- "evidence by date" --> RSN
+    RSN -- "answers" --> SUR
+    RSN -- "model calls" --> GRD
+
+    subgraph KEY["Legend"]
+        direction LR
+        K1["Chronicle component"] ~~~ K2["External system"]:::ext
+    end
